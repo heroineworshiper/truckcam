@@ -22,12 +22,16 @@
 
 // based on opencv-4.x/samples/dnn/face_detect.cpp
 // this runs on the odroid to capture vijeo & send servo commands
+// This requires ffmpeg out of an original hope H264 could be low latency
+// but only JPEG is low enough.
 
 
-#include <opencv2/dnn.hpp>
-#include <opencv2/imgproc.hpp>
-#include <opencv2/highgui.hpp>
-#include <opencv2/objdetect.hpp>
+
+
+#include <opencv4/opencv2/dnn.hpp>
+#include <opencv4/opencv2/imgproc.hpp>
+#include <opencv4/opencv2/highgui.hpp>
+#include <opencv4/opencv2/objdetect.hpp>
 
 #include <stdio.h>
 #include <stdint.h>
@@ -44,24 +48,23 @@
 #include <signal.h>
 #include <linux/videodev2.h>
 
+#include "truckcam.h"
+
 using namespace cv;
 using namespace std;
 
 
+#define DETECT_MODEL "yunet.onnx"
+#define COMPARE_MODEL "face_recognizer_fast.onnx"
+#define REF_FACE "lion.jpg"
 #define COS_THRESHOLD 0.363
 #define SCORE_THRESHOLD 0.9
 #define NMS_THRESHOLD 0.3
 #define TOP_K 5000
-#define DETECT_MODEL "yunet.onnx"
-#define COMPARE_MODEL "face_recognizer_fast.onnx"
-#define REF_FACE "lion.jpg"
 
-// size of downscaled vijeo
-#define RAW_W 1920
-#define RAW_H 1080
 #define HDMI0 0
 #define HDMI1 4
-
+#define HDMI_BUFFERS 2
 
 #define BUFSIZE2 0x400000
 // compressed frame from the hardware
@@ -74,7 +77,8 @@ uint8_t error_flags = 0xff;
 FILE *ffmpeg_fd = 0;
 int servo_fd = -1;
 
-
+int current_operation = IDLE;
+int face_position = FACE_CENTER;
 
 // read frames from HDMI
 void* hdmi_thread(void *ptr)
@@ -87,19 +91,21 @@ void* hdmi_thread(void *ptr)
     int verbose = 1;
     int fd;
     unsigned char *mmap_buffer[HDMI_BUFFERS];
+    int frame_count = 0;
+
 
     while(1)
     {
         if(fd < 0)
         {
-            if(verbose)
-            {
-                printf("hdmi_thread %d opening video4linux\n", __LINE__);
-            }
 
 // probe for the video device
             char string[TEXTLEN];
             sprintf(string, "/dev/video%d", current_path);
+            if(verbose)
+            {
+                printf("hdmi_thread %d opening %s\n", __LINE__, string);
+            }
             fd = open(string, O_RDWR);
 
             if(fd < 0)
@@ -256,6 +262,7 @@ void* hdmi_thread(void *ptr)
 		    bzero(&buffer, sizeof(buffer));
             buffer.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 		    buffer.memory = V4L2_MEMORY_MMAP;
+//printf("hdmi_thread %d\n", __LINE__);
             if(ioctl(fd, VIDIOC_DQBUF, &buffer) < 0)
             {
                 printf("hdmi_thread %d: VIDIOC_DQBUF failed\n",
@@ -270,28 +277,36 @@ void* hdmi_thread(void *ptr)
             {
                 error_flags &= ~VIDEO_BUFFER_ERROR;
                 error_flags &= ~VIDEO_DEVICE_ERROR;
+//printf("hdmi_thread %d\n", __LINE__);
                 send_error();
+//printf("hdmi_thread %d\n", __LINE__);
                 unsigned char *ptr = mmap_buffer[buffer.index];
-//                     printf("hdmi_thread %d: index=%d size=%d %02x %02x %02x %02x %02x %02x %02x %02x\n",
-//                         __LINE__,
-//                         buffer.index,
-//                         buffer.bytesused,
-//                         ptr[0],
-//                         ptr[1],
-//                         ptr[2],
-//                         ptr[3],
-//                         ptr[4],
-//                         ptr[5],
-//                         ptr[6],
-//                         ptr[7]);
+//                 printf("hdmi_thread %d: index=%d size=%d %02x %02x %02x %02x %02x %02x %02x %02x\n",
+//                     __LINE__,
+//                     buffer.index,
+//                     buffer.bytesused,
+//                     ptr[0],
+//                     ptr[1],
+//                     ptr[2],
+//                     ptr[3],
+//                     ptr[4],
+//                     ptr[5],
+//                     ptr[6],
+//                     ptr[7]);
 
-                if(ptr[0] == 0xff && 
+                if(
+// HDMI
+                    (ptr[0] == 0xff && 
                     ptr[1] == 0xd8 && 
                     ptr[2] == 0xff && 
-                    ptr[3] == 0xdb)
+                    ptr[3] == 0xdb) ||
+// generalplus
+                    (ptr[0] == 0xff && 
+                    ptr[1] == 0xd8 && 
+                    ptr[2] == 0xff && 
+                    ptr[3] == 0xc0))
                 {
 // discard if it arrived too soon
-                    fps_frame_count++;
                     struct timespec fps_time2;
                     clock_gettime(CLOCK_MONOTONIC, &fps_time2);
                     double delta = 
@@ -307,7 +322,14 @@ void* hdmi_thread(void *ptr)
                         sem_post(&frame_ready_sema);
                         fps_time1 = fps_time2;
                     }
+                    else
+                    {
+//                         printf("hdmi_thread %d: discarding\n",
+//                             __LINE__);
+// discard it
+                    }
                 }
+//printf("hdmi_thread %d\n", __LINE__);
 
                 if(ioctl(fd, VIDIOC_QBUF, &buffer) < 0)
                 {
@@ -321,14 +343,15 @@ void* hdmi_thread(void *ptr)
                 int64_t diff = TO_MS(time2) - TO_MS(time1);
                 if(diff >= 1000)
                 {
-//                         printf("hdmi_thread %d FPS: %f\n",
-//                             __LINE__,
-//                             (double)frame_count * 1000 / diff);
+//                     printf("hdmi_thread %d FPS: %f\n",
+//                         __LINE__,
+//                         (double)frame_count * 1000 / diff);
                     frame_count = 0;
                     time1 = time2;
                 }
 
             }
+//printf("hdmi_thread %d\n", __LINE__);
         }
 
         if(fd < 0)
@@ -356,29 +379,39 @@ void init_hdmi()
 		0);
 }
 
-void visualize(Mat& input, float[] &scores, Mat& faces, double fps)
+void visualize(Mat& input, float *scores, Mat& faces, double fps, int best_index)
 {
     int thickness = 2;
     std::string fpsString = cv::format("%.2f FPS", (float)fps);
     for (int i = 0; i < faces.rows; i++)
     {
 // Draw bounding box
+        auto color = Scalar(0, 255, 0);
+        if(i == best_index)
+        {
+            color = Scalar(0, 0, 255);
+        }
         rectangle(input, 
-            Rect2i(int(faces.at<float>(i, 0)), 
-                int(faces.at<float>(i, 1)), 
-                int(faces.at<float>(i, 2)), 
-                int(faces.at<float>(i, 3))), 
-            Scalar(0, 255, 0), thickness);
+            Rect2i(int(faces.at<float>(i, 0)), // x
+                int(faces.at<float>(i, 1)),  // y
+                int(faces.at<float>(i, 2)),  // w
+                int(faces.at<float>(i, 3))), // h
+            color, thickness);
+
 // draw score
-        std::string scoreString = cv::format("%.2f", 
-            scores[i]);
+#ifndef USE_SIZE  
+        std::string scoreString = cv::format("%.2f %s", 
+            scores[i],
+            best_index == i ? "REAL LION" : "FAKE LION");
         putText(input, 
             scoreString, 
-            Point(faces.at<float>(i, 0), int(faces.at<float>(i, 1)), 
+            Point(faces.at<float>(i, 0), int(faces.at<float>(i, 1)) - 2), 
             FONT_HERSHEY_SIMPLEX, 
-            0.5, 
+            0.7, 
             Scalar(0, 255, 0), 
             2);
+#endif // !USE_SIZE
+
 
 // Draw landmarks
 //         circle(input, Point2i(int(faces.at<float>(i, 4)), int(faces.at<float>(i, 5))), 2, Scalar(255, 0, 0), thickness);
@@ -390,9 +423,9 @@ void visualize(Mat& input, float[] &scores, Mat& faces, double fps)
 
     putText(input, 
         fpsString, 
-        Point(0, 15), 
+        Point(0, 20), 
         FONT_HERSHEY_SIMPLEX, 
-        0.5, 
+        0.7, 
         Scalar(0, 255, 0), 
         2);
 }
@@ -445,9 +478,113 @@ void quit(int sig)
     exit(0);
 }
 
-void ignore(int sig)
+void ignore_(int sig)
 {
     printf("ignore %d sig=%s\n", __LINE__, signal_titles[sig]);
+}
+
+
+void load_defaults()
+{
+    char *home = getenv("HOME");
+    char string[TEXTLEN];
+    sprintf(string, "%s/.truckcam.rc", home);
+    FILE *fd = fopen(string, "r");
+    
+    if(!fd)
+    {
+        printf("load_defaults %d: Couldn't open %s for reading\n", 
+            __LINE__, 
+            string);
+        return;
+    }
+    
+    while(!feof(fd))
+    {
+        if(!fgets(string, TEXTLEN, fd)) break;
+// get 1st non whitespace character
+        char *key = string;
+        while((*key == ' ' ||
+            *key == '\t' ||
+            *key == '\n') && 
+            *key != 0)
+        {
+            key++;
+        }
+
+// comment or empty
+        if(*key == '#' || *key == 0)
+        {
+            continue;
+        }
+        
+// get start of value
+        char *value = key;
+        while(*value != ' ' && 
+            *value != '\t' && 
+            *value != '\n' && 
+            *value != 0)
+        {
+            value++;
+        }
+
+
+        while((*value == ' ' ||
+            *value == '\t' ||
+            *value == '\n') && 
+            *value != 0)
+        {
+            *value = 0;
+            value++;
+        }
+
+        if(*value == 0)
+        {
+// no value given
+            continue;
+        }
+
+// delete the newline
+        char *end = value;
+        while(*end != '\n' && 
+            *end != 0)
+        {
+            end++;
+        }
+        
+        if(*end == '\n')
+        {
+            *end = 0;
+        }
+        
+        printf("load_defaults %d key='%s' value='%s'\n", __LINE__, key, value);
+        if(!strcasecmp(key, "FACE_POSITION"))
+        {
+            face_position = atoi(value);
+        }
+    }
+
+    fclose(fd);
+}
+
+void save_defaults()
+{
+    char *home = getenv("HOME");
+    char string[TEXTLEN];
+    sprintf(string, "%s/.truckcam.rc", home);
+    FILE *fd = fopen(string, "w");
+
+    if(!fd)
+    {
+        printf("save_defaults %d: Couldn't open %s for writing\n", 
+            __LINE__, 
+            string);
+        return;
+    }
+
+    fprintf(fd, "FACE_POSITION %d\n", (int)face_position);
+
+    fclose(fd);
 }
 
 
@@ -466,12 +603,15 @@ int main(int argc, char** argv)
     signal(SIGUSR1, quit);
     signal(SIGSEGV, quit);
     signal(SIGUSR2, quit);
-    signal(SIGPIPE, ignore);
+    signal(SIGPIPE, ignore_);
     signal(SIGALRM, quit);
     signal(SIGTERM, quit);
-    signal(SIGCHLD, ignore);
+    signal(SIGCHLD, ignore_);
 
+    load_defaults();
 
+// set threading for the odroid
+    setNumThreads(4);
 
     Ptr<FaceDetectorYN> detector = FaceDetectorYN::create(DETECT_MODEL, 
         "", 
@@ -482,7 +622,8 @@ int main(int argc, char** argv)
     Ptr<FaceRecognizerSF> recognizer = FaceRecognizerSF::create(COMPARE_MODEL, 
         "");
 
-// Load reference face
+// Load reference face.  Size makes no difference in speed
+#ifndef USE_SIZE
     Mat ref_image = imread(REF_FACE);
     if (ref_image.empty())
     {
@@ -504,54 +645,114 @@ int main(int argc, char** argv)
 
     Mat ref_features;
     recognizer->feature(aligned_ref, ref_features);
+    ref_features = ref_features.clone();
+#endif // !USE_SIZE
+
 
     detector->setInputSize(Size(SCALED_W, SCALED_H));
 
 
+// DEBUG disable to load test image
     init_hdmi();
+    init_server();
 
     int frame_size2;
+    Mat rawData;
     Mat raw_image;
     Mat scaled_image;
     float fps = 0;
+    int fps_frames = 0;
+    struct timespec fps_time1;
+    clock_gettime(CLOCK_MONOTONIC, &fps_time1);
+
+
 // mane loop
     while(1)
     {
+        int got_it = 0;
+        struct timespec profile_time1;
+        struct timespec profile_time2;
+        double delta;
+        clock_gettime(CLOCK_MONOTONIC, &profile_time1);
+
+#define UPDATE_PROFILE \
+        clock_gettime(CLOCK_MONOTONIC, &profile_time2); \
+        delta =  \
+            (double)((profile_time2.tv_sec * 1000 + profile_time2.tv_nsec / 1000000) - \
+            (profile_time1.tv_sec * 1000 + profile_time1.tv_nsec / 1000000)) / 1000; \
+        profile_time1 = profile_time2;
+
+
+// DEBUG load test image
+//         if(raw_image.cols <= 0 && raw_image.rows <= 0)
+//         {
+//             raw_image = imread("test.jpg");
+//         }
+//         got_it = 1;
+
 // wait for next frame
         sem_wait(&frame_ready_sema);
         pthread_mutex_lock(&frame_lock);
-        int got_it = 0;
+        int frame_size2 = frame_size;
         if(frame_size > 0)
         {
-            Mat rawData(1, frame_size, CV_8UC1, (void*)reader_buffer3);
-            raw_image = imdecode(rawData, cv::IMREAD_COLOR);
+            rawData.reserveBuffer(frame_size);
+            memcpy(rawData.ptr(), reader_buffer3, frame_size);
             frame_size = 0;
+        }
+        pthread_mutex_unlock(&frame_lock);
+
+        if(frame_size2 > 0)
+        {
+            raw_image = imdecode(rawData, cv::IMREAD_COLOR);
             if(raw_image.cols > 0 && raw_image.rows > 0)
             {
                 got_it = 1;
             }
         }
-        pthread_mutex_unlock(&frame_lock);
+
+// 37ms
+        UPDATE_PROFILE
+//        printf("main %d delta=%f\n", __LINE__, delta);
 
         if(got_it)
         {
-            cv::Rect cropping((RAW_W - RAW_H * 4 / 3) / 2, 
-                0, 
-                RAW_H * 4 / 3,
-                RAW_H);
+            cv::Rect cropping(CROP_X, 
+                CROP_Y, 
+                CROP_W,
+                CROP_H);
             resize(raw_image(cropping), 
                 scaled_image,
                 Size(SCALED_W, SCALED_H),
                 INTER_NEAREST);
             Mat faces;
             detector->detect(scaled_image, faces);
-            
+//printf("main %d\n", __LINE__);
+// 125ms
+            UPDATE_PROFILE
+//            printf("main %d delta=%f\n", __LINE__, delta);
+
+            float scores[faces.rows] = { 0 };
+            int best_index = -1;
+            double best_score = -1;
             if(faces.rows > 0)
             {
+#ifdef USE_SIZE
+                int max_size = 0;
+                for(int i = 0; i < faces.rows; i++)
+                {
+                    int w = faces.at<float>(i, 2);
+                    int h = faces.at<float>(i, 3);
+                    int area = w * h;
+                    if(area > max_size)
+                    {
+                        max_size = area;
+                        best_index = i;
+                    }
+                }
+                
+#else // USE_SIZE
 // compare all the faces to the ref
-                int best_index = -1;
-                double best_score = -1;
-                double scores[faces.rows];
                 for(int i = 0; i < faces.rows; i++)
                 {
                     Mat aligned_face;
@@ -560,10 +761,11 @@ int main(int argc, char** argv)
                         aligned_face);
                     Mat features;
                     recognizer->feature(aligned_face, features);
-                    double cos_score = faceRecognizer->match(features, 
+                    double cos_score = recognizer->match(features, 
                         ref_features, 
                         FaceRecognizerSF::DisType::FR_COSINE);
                     scores[i] = cos_score;
+//printf("main %d score %d=%f\n", __LINE__, i, cos_score);
                     if(cos_score > best_score)
                     {
                         best_score = cos_score;
@@ -571,21 +773,63 @@ int main(int argc, char** argv)
                     }
                 }
 
-// draw the results
-                visualize(scaled_image, scores, faces, fps);
-// send frame to ffmpeg server
-                if(server_output > 0)
-                {
-                    int _ = write(server_output, 
-                        (unsigned char*)scaled_image.ptr(0),
-                        SCALED_W * SCALED_H * 3);
-                }
-
 // drive servo
                 if(best_score >= COS_THRESHOLD)
                 {
                 }
+                else
+                {
+                    best_index = -1;
+                }
+#endif // !USE_SIZE
             }
+
+            fps_frames++;
+            struct timespec fps_time2;
+            clock_gettime(CLOCK_MONOTONIC, &fps_time2);
+            delta = 
+                (double)((fps_time2.tv_sec * 1000 + fps_time2.tv_nsec / 1000000) -
+                (fps_time1.tv_sec * 1000 + fps_time1.tv_nsec / 1000000)) / 1000;
+            if(delta > 1.0)
+            {
+                fps_time1 = fps_time2;
+                fps = fps_frames / delta;
+                fps_frames = 0;
+                printf("main %d fps=%f\n", __LINE__, fps);
+            }
+
+// 100ms
+            UPDATE_PROFILE
+//            printf("main %d delta=%f\n", __LINE__, delta);
+
+// send frame to phone
+            if(server_output >= 0)
+            {
+// draw the results
+                visualize(scaled_image, scores, faces, fps, best_index);
+
+#ifdef USE_FFMPEG
+// send to ffmpeg
+                int _ = write(server_output, 
+                    (unsigned char*)scaled_image.ptr(0),
+                    SCALED_W * SCALED_H * 3);
+#else // USE_FFMPEG
+// compress directly to server FIFO
+                std::vector<uchar> buf;
+                std::vector<int> compressing_factor;
+                compressing_factor.push_back(IMWRITE_JPEG_QUALITY);
+                compressing_factor.push_back(50);
+                imencode(".jpg", 
+                    scaled_image, 
+                    buf, 
+                    compressing_factor);
+                send_vijeo_fifo(&buf[0], buf.size());
+#endif // !USE_FFMPEG
+            }
+
+// 10ms
+            UPDATE_PROFILE
+//            printf("main %d delta=%f\n", __LINE__, delta);
         }
     }
 

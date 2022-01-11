@@ -25,15 +25,60 @@
 
 #define TEXTLEN 1024
 
+// video from HDMI
+//#define RAW_W 1920
+//#define RAW_H 1080
+// video from generalplus
+#define RAW_W 1280
+#define RAW_H 720
+// cropped section to scan
+// #define CROP_X 240
+// #define CROP_Y 0
+// #define CROP_W 1440
+// #define CROP_H 720
+#define CROP_X 0
+#define CROP_Y 0
+#define CROP_W 1280
+#define CROP_H 720
+// scaled image to scan
+// smaller is faster
 #define SCALED_W 640
-#define SCALED_H 480
+#define SCALED_H 360
+// max frame rate + 1 to limit the preview bandwidth
+// minimum frame rate is required to prevent wifi stuttering
+#define FPS 11
 
+// use face size instead of recognition model
+#define USE_SIZE
+// use ffmpeg for encoding
+//#define USE_FFMPEG
+
+#define CLAMP(x, y, z) ((x) = ((x) < (y) ? (y) : ((x) > (z) ? (z) : (x))))
+#define TO_MS(x) ((x).tv_sec * 1000 + (x).tv_usec / 1000)
+
+// points to either ffmpeg input or the web socket
+extern int server_output;
+
+extern int current_operation;
+#define IDLE 0
+#define TRACKING 1
+extern int face_position;
+#define FACE_LEFT 0
+#define FACE_CENTER 1
+#define FACE_RIGHT 2
 
 extern uint8_t error_flags;
 #define VIDEO_DEVICE_ERROR 1
 #define VIDEO_BUFFER_ERROR 2
-#define SERVO_ERROR 4
 
+// packet type
+#define VIJEO 0x00
+#define STATUS 0x01
+
+void send_error();
+void init_server();
+void send_vijeo_fifo(uint8_t *data, int bytes);
+void save_defaults();
 
 
 

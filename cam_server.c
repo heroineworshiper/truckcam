@@ -25,6 +25,7 @@
 #include <unistd.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -37,7 +38,7 @@
 #include <sys/wait.h>
 #include <pthread.h>
 #include "truckcam.h"
-
+#include <vector>
 
 #define PORT0 1234
 #define PORT1 1238
@@ -47,14 +48,9 @@
 #define FFMPEG_STDIN "/tmp/ffmpeg_stdin"
 #define FFMPEG_STDOUT "/tmp/ffmpeg_stdout"
 
-// packet type
-#define VIJEO 0x00
-#define STATUS 0x01
-
 #define START_CODE0 0xff
 #define START_CODE1 0xe7
 
-uint8_t *server_video = 0;
 int server_output = -1;
 uint8_t prev_error_flags = 0xff;
 
@@ -74,7 +70,10 @@ webserver_connection_t *current_connection = 0;
 pthread_mutex_t www_mutex;
 
 
-int send_packet(webserver_connection_t *connection, int type, uint8_t *data, int bytes)
+int send_packet(int fd, 
+    int type, 
+    uint8_t *data, 
+    int bytes)
 {
     uint8_t header[8];
     header[0] = START_CODE0;
@@ -88,10 +87,12 @@ int send_packet(webserver_connection_t *connection, int type, uint8_t *data, int
 
     int result = -1;
     pthread_mutex_lock(&www_mutex);
-    if(connection->fd >= 0)
+    if(fd >= 0)
     {
-        result = write(connection->fd, header, 8);
-        result = write(connection->fd, data, bytes);
+//printf("send_packet %d\n", __LINE__);
+        result = write(fd, header, 8);
+        result = write(fd, data, bytes);
+//printf("send_packet %d\n", __LINE__);
     }
     pthread_mutex_unlock(&www_mutex);
     return result;
@@ -99,49 +100,23 @@ int send_packet(webserver_connection_t *connection, int type, uint8_t *data, int
 
 void send_status(webserver_connection_t *connection)
 {
-    uint8_t buffer[32];
+    uint8_t buffer[3];
     buffer[0] = current_operation;
-    buffer[1] = 0;
-
-    int tmp = (int)pan;
-    buffer[2] = tmp & 0xff;
-    buffer[3] = (tmp >> 8) & 0xff;
-    buffer[4] = (tmp >> 16) & 0xff;
-    buffer[5] = (tmp >> 24) & 0xff;
-
-    tmp = (int)tilt;
-    buffer[6] = tmp & 0xff;
-    buffer[7] = (tmp >> 8) & 0xff;
-    buffer[8] = (tmp >> 16) & 0xff;
-    buffer[9] = (tmp >> 24) & 0xff;
-
-    tmp = (int)start_pan;
-    buffer[10] = tmp & 0xff;
-    buffer[11] = (tmp >> 8) & 0xff;
-    buffer[12] = (tmp >> 16) & 0xff;
-    buffer[13] = (tmp >> 24) & 0xff;
-
-    tmp = (int)start_tilt;
-    buffer[14] = tmp & 0xff;
-    buffer[15] = (tmp >> 8) & 0xff;
-    buffer[16] = (tmp >> 16) & 0xff;
-    buffer[17] = (tmp >> 24) & 0xff;
-
-    buffer[18] = pan_sign;
-    buffer[19] = tilt_sign;
-    buffer[20] = lens;
-    buffer[21] = landscape;
-    buffer[22] = error_flags;
+    buffer[1] = face_position;
+    buffer[2] = error_flags;
 
     prev_error_flags = error_flags;
 
 //    printf("send_status %d error_flags=%d\n", __LINE__, error_flags);
-    send_packet(connection, STATUS, buffer, 23);
+    send_packet(connection->fd, STATUS, buffer, 3);
 }
+
 
 void send_error()
 {
-    pthread_mutex_lock(&www_mutex);
+// only called in the hdmi thread, so not locking 
+// to work around a deadlock with send_packet
+//    pthread_mutex_lock(&www_mutex);
 //     printf("send_error %d error_flags=%d prev_error_flags=%d\n", 
 //         __LINE__,
 //         error_flags,
@@ -158,12 +133,44 @@ void send_error()
 		    }
 	    }
     }
-    pthread_mutex_unlock(&www_mutex);
+//    pthread_mutex_unlock(&www_mutex);
+}
+
+
+
+
+pthread_mutex_t fifo_mutex;
+sem_t fifo_ready;
+int fifo_read_ptr = 0;
+int fifo_write_ptr = 0;
+int fifo_used = 0;
+#define FIFO_SIZE 2
+std::vector<uint8_t> fifo_buf[FIFO_SIZE];
+
+void send_vijeo_fifo(uint8_t *data, int bytes)
+{
+    pthread_mutex_lock(&fifo_mutex);
+// discard if the FIFO is full
+    if(fifo_used < FIFO_SIZE)
+    {
+        auto fifo_ptr = &fifo_buf[fifo_write_ptr];
+        fifo_ptr->resize(bytes);
+        memcpy(&(*fifo_ptr)[0], data, bytes);
+        fifo_used++;
+        fifo_write_ptr++;
+        if(fifo_write_ptr >= FIFO_SIZE)
+        {
+            fifo_write_ptr = 0;
+        }
+        sem_post(&fifo_ready);
+    }
+    pthread_mutex_unlock(&fifo_mutex);
 }
 
 
 void send_vijeo(webserver_connection_t *connection)
 {
+#ifdef USE_FFMPEG
 //#define FFMPEG_COMMAND "ffmpeg -y -f rawvideo -y -pix_fmt bgr24 -r 30 -s:v %dx%d -i - -vf scale=%d:%d -f h264 -c:v h264 -bufsize 0 -b:v 1000k -maxrate 2M -flush_packets 1 -an - > %s"
 //#define FFMPEG_COMMAND "ffmpeg -y -f rawvideo -y -pix_fmt bgr24 -r 30 -s:v %dx%d -i - -vf scale=%d:%d -f hevc -bufsize 0 -b:v 1000k -maxrate 2M -flush_packets 1 -an - > %s"
 //#define FFMPEG_COMMAND "cat %s | ffmpeg -y -f rawvideo -y -pix_fmt bgr24 -r 30 -s:v %dx%d -i - -vf scale=%d:%d -f mjpeg -pix_fmt yuvj420p -bufsize 0 -b:v 5M -flush_packets 1 -an - > %s"
@@ -173,8 +180,8 @@ void send_vijeo(webserver_connection_t *connection)
     sprintf(string, 
         FFMPEG_COMMAND, 
         FFMPEG_STDIN,
-        SERVER_W,
-        SERVER_H,
+        SCALED_W,
+        SCALED_H,
         FFMPEG_STDOUT);
     printf("send_vijeo %d: running %s\n",
         __LINE__,
@@ -257,7 +264,7 @@ void send_vijeo(webserver_connection_t *connection)
             }
             else
             {
-                bytes_written = send_packet(connection, VIJEO, buffer, bytes_read);
+                bytes_written = send_packet(connection->fd, VIJEO, buffer, bytes_read);
                 if(bytes_written < bytes_read)
                 {
                     printf("send_vijeo %d: connection closed\n",
@@ -265,17 +272,15 @@ void send_vijeo(webserver_connection_t *connection)
                     done = 1;
                 }
                 total += bytes_written;
-            }
-        }
-
 // printf("send_vijeo %d: bytes_read=%d bytes_written=%d\n",
 // __LINE__,
 // bytes_read,
 // bytes_written);
-// printf("send_vijeo %d: total=%d\n",
-// __LINE__,
-// total);
+            }
+        }
+
     }
+
 
     pthread_mutex_lock(&www_mutex);
     kill(ffmpeg_pid, SIGKILL);
@@ -285,7 +290,52 @@ void send_vijeo(webserver_connection_t *connection)
     fclose(ffmpeg_read);
     server_output = -1;
     pthread_mutex_unlock(&www_mutex);
+
+
+#else // USE_FFMPEG
+
+    int done = 0;
+    std::vector<uint8_t> buf;
+    while(!done)
+    {
+        sem_wait(&fifo_ready);
+        pthread_mutex_lock(&fifo_mutex);
+        if(fifo_used > 0)
+        {
+            auto fifo_ptr = &fifo_buf[fifo_read_ptr];
+            buf = *fifo_ptr;
+            fifo_used--;
+            fifo_read_ptr++;
+            if(fifo_read_ptr >= FIFO_SIZE)
+            {
+                fifo_read_ptr = 0;
+            }
+        }
+        pthread_mutex_unlock(&fifo_mutex);
+
+    
+        if(buf.size() > 0)
+        {
+            int bytes_written = 0;
+            bytes_written = send_packet(connection->fd, VIJEO, &buf[0], buf.size());
+            if(bytes_written < buf.size())
+            {
+                printf("send_vijeo %d: connection closed\n",
+                    __LINE__);
+                done = 1;
+            }
+            buf.resize(0);
+        }
+        else
+        if(!connection->is_reading)
+        {
+            done = 1;
+        }
+    }
+
+#endif // !USE_FFMPEG
 }
+
 
 
 void* web_server_reader(void *ptr)
@@ -314,17 +364,36 @@ void* web_server_reader(void *ptr)
                 printf("web_server_reader %d '%c'\n", __LINE__, buffer[i]);
                 
 // toggle servo
-                if(c == ' ')
+                switch(c)
                 {
-                    send_status(connection);
+                    case ' ':
+                        current_operation = TRACKING;
+                        break;
+                    case 'q':
+                        current_operation = IDLE;
+                        break;
+                    case 'l':
+                        face_position = FACE_LEFT;
+                        ::save_defaults();
+                        break;
+                    case 'c':
+                        face_position = FACE_CENTER;
+                        ::save_defaults();
+                        break;
+                    case 'r':
+                        face_position = FACE_RIGHT;
+                        ::save_defaults();
+                        break;
                 }
+
+                send_status(connection);
             }
         }
 
 		printf("web_server_reader %d: client closed\n", __LINE__);
         pthread_mutex_lock(&www_mutex);
-// TODO: must interrupt the fread in the writer if video isn't streaming
 		connection->is_reading = 0;
+        sem_post(&fifo_ready);
         pthread_mutex_unlock(&www_mutex);
     }
 }
@@ -341,7 +410,6 @@ void* web_server_writer(void *ptr)
 		sem_wait(&connection->write_lock);
 		printf("web_server_writer %d: client opened\n", __LINE__);
 
-        send_status(connection);
         send_vijeo(connection);
 
 
@@ -353,6 +421,7 @@ void* web_server_writer(void *ptr)
         pthread_mutex_unlock(&www_mutex);
 	}
 }
+
 
 webserver_connection_t* new_connection()
 {
@@ -378,14 +447,26 @@ webserver_connection_t* new_connection()
 
 void start_connection(webserver_connection_t *connection, int fd)
 {
+    sem_init(&fifo_ready, 0, 0);
+    pthread_mutex_lock(&fifo_mutex);
+    fifo_read_ptr = 0;
+    fifo_write_ptr = 0;
+    fifo_used = 0;
+    pthread_mutex_unlock(&fifo_mutex);
+
     pthread_mutex_lock(&www_mutex);
 	connection->is_writing = 1;
 	connection->is_reading = 1;
 	connection->fd = fd;
+#ifndef USE_FFMPEG
+    server_output = fd;
+#endif
     current_connection = connection;
     pthread_mutex_unlock(&www_mutex);
 
+    send_status(connection);
 
+// start the threads
 	sem_post(&connection->write_lock);
 	sem_post(&connection->read_lock);
 }
@@ -432,6 +513,12 @@ void* web_server(void *ptr)
 							&size);
 
 //printf("web_server %d: accept\n", __LINE__);
+        int flag = 1; 
+        setsockopt(connection_fd, 
+            IPPROTO_TCP, 
+            TCP_NODELAY, 
+            (char *)&flag, 
+            sizeof(int));
 
 		int got_it = 0;
 		for(i = 0; i < TOTAL_CONNECTIONS; i++)
@@ -456,6 +543,7 @@ void* web_server(void *ptr)
 
 void init_server()
 {
+#ifdef USE_FFMPEG
     printf("init_server %d making %s %s\n", __LINE__, FFMPEG_STDIN, FFMPEG_STDOUT);
     int result = mkfifo(FFMPEG_STDIN, 0777);
     if(result != 0)
@@ -467,14 +555,14 @@ void init_server()
     {
         printf("init_server %d %s: %s\n", __LINE__, FFMPEG_STDOUT, strerror(errno));
     }
-
-    server_video = (uint8_t*)malloc(SERVER_W * SERVER_H * 3);
+#endif // USE_FFMPEG
 
 	pthread_mutexattr_t attr2;
 	pthread_mutexattr_init(&attr2);
     pthread_mutexattr_settype(&attr2, PTHREAD_MUTEX_RECURSIVE);
 	pthread_mutex_init(&www_mutex, &attr2);
-    
+    pthread_mutex_init(&fifo_mutex, &attr2);
+
     pthread_t tid;
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
