@@ -23,7 +23,12 @@
 #ifndef TRUCKCAM_H
 #define TRUCKCAM_H
 
+#include <sys/time.h>
+
 #define TEXTLEN 1024
+
+// raspberry pi SPI
+#define USE_PI
 
 // video from HDMI
 //#define RAW_W 1920
@@ -67,6 +72,13 @@ extern int face_position;
 #define FACE_CENTER 1
 #define FACE_RIGHT 2
 
+extern int deadband;
+extern int speed;
+extern int xy_radius;
+extern int size_radius;
+extern int color_radius;
+extern struct timespec settings_time;
+
 extern uint8_t error_flags;
 #define VIDEO_DEVICE_ERROR 1
 #define VIDEO_BUFFER_ERROR 2
@@ -79,7 +91,7 @@ void send_error();
 void init_server();
 void send_vijeo_fifo(uint8_t *data, int bytes);
 void save_defaults();
-
+void dump_settings();
 
 
 

@@ -348,10 +348,15 @@ void* web_server_reader(void *ptr)
 		sem_wait(&connection->read_lock);
 		printf("web_server_reader %d: client opened\n", __LINE__);
 
+#define PARSE_COMMAND 0
+#define PARSE_SETTINGS 1
+        int parsing_state = PARSE_COMMAND;
+        int counter = 0;
+        uint8_t packet[16];
         while(1)
         {
             int bytes_read = read(connection->fd, buffer, SOCKET_BUFSIZE);
-            printf("web_server_reader %d bytes_read=%d\n", __LINE__, bytes_read);
+//            printf("web_server_reader %d bytes_read=%d\n", __LINE__, bytes_read);
             if(bytes_read <= 0)
             {
                 break;
@@ -361,32 +366,79 @@ void* web_server_reader(void *ptr)
             for(i = 0; i < bytes_read; i++)
             {
                 int c = buffer[i];
-                printf("web_server_reader %d '%c'\n", __LINE__, buffer[i]);
-                
-// toggle servo
-                switch(c)
-                {
-                    case ' ':
-                        current_operation = TRACKING;
-                        break;
-                    case 'q':
-                        current_operation = IDLE;
-                        break;
-                    case 'l':
-                        face_position = FACE_LEFT;
-                        ::save_defaults();
-                        break;
-                    case 'c':
-                        face_position = FACE_CENTER;
-                        ::save_defaults();
-                        break;
-                    case 'r':
-                        face_position = FACE_RIGHT;
-                        ::save_defaults();
-                        break;
-                }
+//                printf("web_server_reader %d '%c'\n", __LINE__, buffer[i]);
 
-                send_status(connection);
+// toggle servo
+                if(parsing_state == PARSE_COMMAND)
+                {
+                    switch(c)
+                    {
+                        case ' ':
+                            current_operation = TRACKING;
+                            send_status(connection);
+                            break;
+                        case 'q':
+                            current_operation = IDLE;
+                            send_status(connection);
+                            break;
+                        case 'l':
+                            face_position = FACE_LEFT;
+                            ::save_defaults();
+                            send_status(connection);
+                            break;
+                        case 'c':
+                            face_position = FACE_CENTER;
+                            ::save_defaults();
+                            send_status(connection);
+                            break;
+                        case 'r':
+                            face_position = FACE_RIGHT;
+                            ::save_defaults();
+                            send_status(connection);
+                            break;
+                        case 's':
+                            parsing_state = PARSE_SETTINGS;
+                            counter = 0;
+                            break;
+                    }
+                }
+                else
+                {
+                    packet[counter++] = c;
+                    if(counter >= 5)
+                    {
+                        parsing_state = PARSE_COMMAND;
+                        if(packet[0] != 0xff)
+                        {
+                            deadband = packet[0];
+                        }
+
+                        if(packet[1] != 0xff)
+                        {
+                            speed = packet[1];
+                        }
+
+                        if(packet[2] != 0xff)
+                        {
+                            xy_radius = packet[2];
+                        }
+
+                        if(packet[3] != 0xff)
+                        {
+                            size_radius = packet[3];
+                        }
+
+                        if(packet[4] != 0xff)
+                        {
+                            color_radius = packet[4];
+                        }
+
+                        ::save_defaults();
+                        send_status(connection);
+                        dump_settings();
+                        clock_gettime(CLOCK_MONOTONIC, &settings_time);
+                    }
+                }
             }
         }
 
