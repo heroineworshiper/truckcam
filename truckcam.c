@@ -74,9 +74,8 @@ using namespace std;
 #define NMS_THRESHOLD 0.3
 #define TOP_K 5000
 
-#define HDMI0 0
-#define HDMI1 4
 #define HDMI_BUFFERS 2
+#define HDMI_TEXT "PRODUCT=1b3f/2202/100"
 
 #define BUFSIZE2 0x400000
 // compressed frame from the hardware
@@ -88,6 +87,7 @@ static pthread_mutex_t hdmi_lock;
 static sem_t frame_ready_sema;
 struct timespec last_frame_time = { 0 };
 int hdmi_fd = -1;
+char current_path[TEXTLEN] = { 0 };
 
 int servo_fd = -1;
 static pthread_mutex_t servo_lock;
@@ -129,6 +129,90 @@ int prev_b;
         (profile_time1.tv_sec * 1000 + profile_time1.tv_nsec / 1000000)) / 1000; \
     profile_time1 = profile_time2;
 
+
+// probe for the video device
+int open_hdmi(int verbose)
+{
+    vector<char*> paths;
+    char string[TEXTLEN];
+    FILE *fd = popen("ls /dev/video*", "r");
+    current_path[0] = 0;
+    while(!feof(fd))
+    {
+        char *result = fgets(string, TEXTLEN, fd);
+        if(!result)
+        {
+            break;
+        }
+// strip the newlines
+        while(strlen(result) > 1 &&
+            result[strlen(result) - 1] == '\n')
+        {
+            result[strlen(result) - 1] = 0;
+        }
+        paths.push_back(strdup(result));
+    }
+    fclose(fd);
+
+    int fd2 = -1;
+    for(int i = 0; i < paths.size(); i++)
+    {
+        fd2 = open(paths.at(i), O_RDWR);
+        if(fd2 < 0)
+        {
+            continue;
+        }
+        
+        struct v4l2_format v4l2_params;
+        v4l2_params.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        ioctl(fd2, VIDIOC_G_FMT, &v4l2_params);
+// printf("open_hdmi %d %s %d %d\n", 
+// __LINE__, 
+// paths.at(i),
+// v4l2_params.fmt.pix.width, 
+// v4l2_params.fmt.pix.height);
+
+        if(verbose)
+        {
+            printf("hdmi_thread %d: %s format=%c%c%c%c w=%d h=%d\n",
+                __LINE__,
+                paths.at(i),
+                v4l2_params.fmt.pix.pixelformat & 0xff,
+                (v4l2_params.fmt.pix.pixelformat >> 8) & 0xff,
+                (v4l2_params.fmt.pix.pixelformat >> 16) & 0xff,
+                (v4l2_params.fmt.pix.pixelformat >> 24) & 0xff,
+                v4l2_params.fmt.pix.width,
+                v4l2_params.fmt.pix.height);
+        }
+
+        if(v4l2_params.fmt.pix.width == RAW_W &&
+            v4l2_params.fmt.pix.height == RAW_H)
+        {
+            if(verbose)
+            {
+                printf("open_hdmi %d opened %s\n", __LINE__, paths.at(i));
+                strcpy(current_path, paths.at(i));
+            }
+            break;
+        }
+        else
+        {
+            close(fd2);
+            fd2 = -1;
+        }
+    }
+//printf("open_hdmi %d fd2=%d\n", __LINE__, fd2);
+
+    while(paths.size() > 0)
+    {
+        free(paths.back());
+        paths.pop_back();
+    }
+
+    return fd2;
+}
+
+
 // read frames from HDMI
 void* hdmi_thread(void *ptr)
 {
@@ -136,7 +220,6 @@ void* hdmi_thread(void *ptr)
     struct timespec fps_time1;
     gettimeofday(&time1, 0);
 
-    int current_path = HDMI0;
     int verbose = 1;
     unsigned char *mmap_buffer[HDMI_BUFFERS];
     int frame_count = 0;
@@ -147,15 +230,9 @@ void* hdmi_thread(void *ptr)
         if(hdmi_fd < 0)
         {
 
-// probe for the video device
             pthread_mutex_lock(&hdmi_lock);
-            char string[TEXTLEN];
-            sprintf(string, "/dev/video%d", current_path);
-            if(verbose)
-            {
-                printf("hdmi_thread %d opening %s\n", __LINE__, string);
-            }
-            hdmi_fd = open(string, O_RDWR);
+            
+            hdmi_fd = open_hdmi(verbose);
 
             if(hdmi_fd < 0)
             {
@@ -163,9 +240,8 @@ void* hdmi_thread(void *ptr)
                 pthread_mutex_unlock(&hdmi_lock);
                 if(!(error_flags & VIDEO_DEVICE_ERROR))
                 {
-                    printf("hdmi_thread %d: failed to open %s\n",
-                        __LINE__,
-                        string);
+                    printf("hdmi_thread %d: no video device\n",
+                        __LINE__);
                 }
                 error_flags |= VIDEO_DEVICE_ERROR;
                 send_error();
@@ -182,17 +258,6 @@ void* hdmi_thread(void *ptr)
                 v4l2_params.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
                 ioctl(hdmi_fd, VIDIOC_G_FMT, &v4l2_params);
 
-                if(verbose)
-                {
-                    printf("hdmi_thread %d: default format=%c%c%c%c w=%d h=%d\n",
-                        __LINE__,
-                        v4l2_params.fmt.pix.pixelformat & 0xff,
-                        (v4l2_params.fmt.pix.pixelformat >> 8) & 0xff,
-                        (v4l2_params.fmt.pix.pixelformat >> 16) & 0xff,
-                        (v4l2_params.fmt.pix.pixelformat >> 24) & 0xff,
-                        v4l2_params.fmt.pix.width,
-                        v4l2_params.fmt.pix.height);
-                }
 
 // reject it if it's the wrong resolution, since it's the laptop webcam
                 if(v4l2_params.fmt.pix.width != RAW_W ||
@@ -215,9 +280,9 @@ void* hdmi_thread(void *ptr)
                 {
                     if((error_flags & VIDEO_DEVICE_ERROR))
                     {
-                        printf("hdmi_thread %d: opened %s\n",
-                            __LINE__,
-                            string);
+//                         printf("hdmi_thread %d: opened %s\n",
+//                             __LINE__,
+//                             current_path);
                         error_flags &= ~VIDEO_DEVICE_ERROR;
                         send_error();
                     }
@@ -232,8 +297,8 @@ void* hdmi_thread(void *ptr)
 #endif
                     if(ioctl(hdmi_fd, VIDIOC_S_FMT, &v4l2_params) < 0)
                     {
-                        printf("hdmi_thread %d: VIDIOC_S_FMT failed\n",
-                            __LINE__);
+//                         printf("hdmi_thread %d: VIDIOC_S_FMT failed\n",
+//                             __LINE__);
                     }
                 }
             }
@@ -286,9 +351,9 @@ void* hdmi_thread(void *ptr)
 					            MAP_SHARED,
 					            hdmi_fd,
 					            buffer.m.offset);
-                            printf("hdmi_thread %d: allocated buffer size=%d\n",
-                                __LINE__,
-                                buffer.length);
+//                             printf("hdmi_thread %d: allocated buffer size=%d\n",
+//                                 __LINE__,
+//                                 buffer.length);
                             if(ioctl(hdmi_fd, VIDIOC_QBUF, &buffer) < 0)
                             {
                                 printf("hdmi_thread %d: VIDIOC_QBUF failed\n",
@@ -438,15 +503,6 @@ void* hdmi_thread(void *ptr)
                 }
             }
 //printf("hdmi_thread %d\n", __LINE__);
-        }
-
-        if(hdmi_fd < 0)
-        {
-            current_path++;
-            if(current_path > HDMI1)
-            {
-                current_path = HDMI0;
-            }
         }
     }
 }
@@ -963,7 +1019,8 @@ int main(int argc, char** argv)
             resize(raw_image(cropping), 
                 scaled_image,
                 Size(SCALED_W, SCALED_H),
-                INTER_NEAREST);
+//                INTER_NEAREST);
+                INTER_LINEAR); // no speed difference
             Mat faces;
             detector->detect(scaled_image, faces);
 //printf("main %d\n", __LINE__);
