@@ -10,6 +10,8 @@ import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -65,7 +67,8 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
 
     // size of the encoded video
     static final int W = 640;
-    static final int H = 480;
+    static final int H = 360;
+    static boolean USE_FFMPEG = false;
     static OutputStream ffmpeg_stdin;
     static InputStream ffmpeg_stdout;
     static String stdinPath;
@@ -74,19 +77,15 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
 
 
     final int OFF = -1;
-    final int STARTUP  = 0;
-    final int CONFIGURING = 1;
-    final int TRACKING = 2;
+    final int IDLE  = 0;
+    final int TRACKING = 1;
     int currentOperation = OFF;
     int prevOperation = OFF;
+    final int FACE_LEFT = 0;
+    final int FACE_CENTER = 1;
+    final int FACE_RIGHT = 2;
+    int facePosition = FACE_CENTER;
 
-    int pan;
-    int tilt;
-    int start_pan;
-    int start_tilt;
-    int pan_sign;
-    int tilt_sign;
-    int lens;
     static boolean landscape = true;
     static boolean prevLandscape = false;
 
@@ -103,12 +102,10 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
 
     Vector<Button> buttons = new Vector();
     Vector<Text> texts = new Vector();
-    Button landscapeButton;
-    Button lensButton;
-    Button tiltButton;
-    Button panButton;
-    Text panText;
-    Text tiltText;
+    Button activateButton;
+    Button leftButton;
+    Button centerButton;
+    Button rightButton;
     Text videoDeviceError;
     Text videoBufferError;
     Text servoError;
@@ -168,7 +165,9 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         stdoutPath = FFmpegKitConfig.registerNewFFmpegPipe(getContext());
         Log.i("FirstFragment", "onViewCreated " + stdinPath + " " + stdoutPath);
 
-        new Thread(new DecodeThread(this)).start();
+        if(USE_FFMPEG) {
+            new Thread(new DecodeThread(this)).start();
+        }
         new Thread(client = new ClientThread(this)).start();
 
     }
@@ -271,6 +270,23 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         });
     }
 
+    public void drawVideo(Bitmap bitmap)
+    {
+        getActivity().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                Canvas canvas = video.getHolder().lockCanvas();
+
+                if(canvas != null) {
+                    // must convert to a software bitmap for draw()
+                    videoBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false);
+                    drawGUI(canvas);
+                    video.getHolder().unlockCanvasAndPost(canvas);
+                }
+            }
+        });
+    }
+
     public void drawVideo() {
         getActivity().runOnUiThread(new Runnable() {
             @Override
@@ -313,27 +329,17 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
             @Override
             public void run() {
                 boolean needRedraw = false;
-                if (panButton != null) {
-                    needRedraw |= panButton.updateText(String.valueOf(pan_sign));
-                }
-                if (tiltButton != null) {
-                    needRedraw |= tiltButton.updateText(String.valueOf(tilt_sign));
-                }
-                if(panText != null)
+                if(leftButton != null)
                 {
-                    needRedraw |= panText.updateText(getPanText());
+                    needRedraw |= leftButton.updateText(getLeftText());
                 }
-                if(tiltText != null)
+                if(centerButton != null)
                 {
-                    needRedraw |= tiltText.updateText(getTiltText());
+                    needRedraw |= centerButton.updateText(getCenterText());
                 }
-                if(lensButton != null)
+                if(rightButton != null)
                 {
-                    needRedraw |= lensButton.updateText(lensText());
-                }
-                if(landscapeButton != null)
-                {
-                    needRedraw |= landscapeButton.updateText(landscapeText());
+                    needRedraw |= rightButton.updateText(getRightText());
                 }
 
                 needRedraw |= updateErrors();
@@ -353,12 +359,11 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
     {
         buttons.clear();
         texts.clear();
-        panButton = null;
-        tiltButton = null;
-        panText = null;
-        tiltText = null;
-        lensButton = null;
-        landscapeButton = null;
+
+        activateButton = null;
+        leftButton = null;
+        centerButton = null;
+        rightButton = null;
 
 
 
@@ -401,392 +406,103 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
 
             texts.add(videoDeviceError);
             texts.add(videoBufferError);
-            texts.add(servoError);
+//            texts.add(servoError);
             updateErrors();
 
             switch(currentOperation)
             {
-                case STARTUP: {
-                    String text = "WELCOME TO TRUCK CAM";
-                    size = Text.calculateSize(text);
-                    if(landscape)
-                    {
-                        x = canvas.getWidth() - MARGIN;
-                        y = canvas.getHeight() / 4 - size.width() / 2;
+                case IDLE:
+                case TRACKING: {
+                    String text;
+                    if(currentOperation == IDLE) {
+                        text = "ACTIVATE SERVO";
                     }
-                    else
-                    {
-                        x = canvas.getWidth() / 2 - size.width() / 2;
-                        y = canvas.getHeight() / 2 + MARGIN;
+                    else{
+                        text = "ABORT";
                     }
-
+                    size = Button.calculateSize(text, null);
                     if(landscape) {
-                        texts.add(new Text(x - size.height() / 2, y, text));
-                    }
-                    else {
-                        texts.add(new Text(x, y + size.height() / 2, text));
-                    }
-
-
-                    text = "ACTIVATE MOTORS";
-                    if(landscape) {
-                        x = canvas.getWidth() / 2;
-                        y = canvas.getHeight() / 4;
+                        x = canvas.getWidth() - size.width() * 2 - MARGIN;
+                        y = MARGIN + size.height() / 2;
                     }
                     else
                     {
                         x = canvas.getWidth() / 2;
                         y = canvas.getHeight() * 3 / 4;
                     }
-                    Button b = new Button(x, y, text);
-                    b.listener = new Button.ButtonListener() {
+
+
+                    activateButton = new Button(x, y, text);
+                    activateButton.listener = new Button.ButtonListener() {
                         @Override
                         public void onClick() {
-                            Log.i("FirstFragment", "ACTIVATE MOTORS");
-                            client.sendCommand(' ');
+                            Log.i("FirstFragment", "ACTIVATE SERVO");
+                            if(currentOperation == IDLE) {
+                                client.sendCommand(' ');
+                            }
+                            else{
+                                client.sendCommand('q');
+                            }
                         }
                     };
-                    buttons.add(b);
-                    break;
-                }
+                    buttons.add(activateButton);
 
-
-
-                case CONFIGURING: {
-                    String text = "ROTATE PHONE FOR";
+                    text = "FACE POSITION:";
                     size = Text.calculateSize(text);
-                    if (landscape) {
-                        x = canvas.getWidth() - MARGIN - size.height() / 2;
-                        y = MARGIN;
-                    } else {
-                        x = MARGIN;
-                        y = canvas.getHeight() / 2 + MARGIN + size.height() / 2;
-                    }
+                    x -= activateButton.getW() + MARGIN;
+                    y = MARGIN;
                     Text t = new Text(x, y, text);
                     texts.add(t);
-                    if(landscape) {
-                        text = "PORTRAIT MODE";
-                        x -= size.height() + MARGIN;
-                    }
-                    else
-                    {
-                        text = "LANDSCAPE MODE";
-                        y += size.height() + MARGIN;
-                    }
-                    t = new Text(x, y, text);
-                    texts.add(t);
 
-                    text = "ABORT";
-                    size = Button.calculateSize(text, null);
-                    if (landscape) {
-                        x = size.height() / 2 + 1;
-                        y = canvas.getHeight() / 8;
-                    } else {
-                        x = size.width() / 2 + MARGIN;
-                        y = canvas.getHeight() - size.height() / 2 - MARGIN;
-                    }
-                    Button stop = new Button(x, y, text);
-                    stop.listener = new Button.ButtonListener() {
+                    text = getLeftText();
+                    size = Button.calculateSize("O", null);
+                    x -= t.getW() + MARGIN + size.width() / 2;
+                    y = MARGIN + size.height() / 2;
+                    leftButton = new Button(x, y, text);
+                    leftButton.listener = new Button.ButtonListener() {
                         @Override
                         public void onClick() {
-                            Log.i("FirstFragment", "STOP");
-                            client.sendCommand('q');
-                        }
-                    };
-                    buttons.add(stop);
-
-                    text = "START TRACKING";
-                    size = Button.calculateSize(text, null);
-                    if (landscape) {
-                        y = canvas.getHeight() * 3 / 8;
-                    } else {
-                        x = canvas.getWidth() - size.width() / 2 - MARGIN;
-                    }
-                    Button start = new Button(x, y, text);
-                    start.listener = new Button.ButtonListener() {
-                        @Override
-                        public void onClick() {
-                            Log.i("FirstFragment", "START");
-                            // different code to prevent buffered keypresses
-                            client.sendCommand('\n');
-                        }
-                    };
-                    buttons.add(start);
-
-//
-//                    x += size.width() * 2;
-//
-//                    text = landscapeText();
-//                    landscapeButton = new Button(x,videoRect.top / 4, text);
-//                    landscapeButton.listener = new Button.ButtonListener() {
-//                        @Override
-//                        public void onClick() {
-//                            Log.i("FirstFragment", "ROTATE");
-//                            client.sendCommand('r');
-//                        }
-//                    };
-//                    buttons.add(landscapeButton);
-
-                    if (landscape) {
-                        y = MARGIN;
-                        x += start.getW() + MARGIN;
-                    } else {
-                        y -= size.height() + MARGIN;
-                        x = MARGIN;
-                    }
-
-                    t = new Text(x, y, "PAN SIGN:");
-                    texts.add(t);
-
-                    // fixed extents for the pan & tilt signs
-                    size = Button.calculateSize("-1", null);
-                    if (landscape) {
-                        y += t.getH() + size.height() / 2 + MARGIN;
-                    } else {
-                        x += t.getW() + size.width() / 2 + MARGIN;
-                    }
-                    text = String.valueOf(pan_sign);
-                    panButton = new Button(x, y, text);
-                    panButton.listener = new Button.ButtonListener() {
-                        @Override
-                        public void onClick() {
-                            Log.i("FirstFragment", "PAN SIGN");
-                            client.sendCommand('p');
-                        }
-                    };
-                    buttons.add(panButton);
-
-                    if (landscape) {
-                        y = canvas.getHeight() / 4;
-                    } else {
-                        x = canvas.getWidth() / 2;
-                    }
-                    t = new Text(x, y, "TILT SIGN:");
-                    texts.add(t);
-
-                    if (landscape) {
-                        y += t.getH() + size.height() / 2 + MARGIN;
-                    } else {
-                        x += t.getW() + size.width() / 2 + MARGIN;
-                    }
-                    text = String.valueOf(tilt_sign);
-                    tiltButton = new Button(x, y, text);
-                    tiltButton.listener = new Button.ButtonListener() {
-                        @Override
-                        public void onClick() {
-                            Log.i("FirstFragment", "TILT SIGN");
-                            client.sendCommand('t');
-                        }
-                    };
-
-                    buttons.add(tiltButton);
-
-
-                    size = Text.calculateSize("X");
-                    if (landscape) {
-                        x += tiltButton.getW() / 2 + size.width() + MARGIN;
-                        y = MARGIN;
-                    } else {
-                        x = MARGIN;
-                        y -= tiltButton.getH() / 2 + MARGIN + size.height() / 2;
-                    }
-
-
-                    panText = new Text(x, y, getPanText());
-                    texts.add(panText);
-
-                    if (landscape) {
-                        y = canvas.getHeight() / 4;
-                    } else {
-                        x = canvas.getWidth() / 2;
-                    }
-
-                    tiltText = new Text(x, y, getTiltText());
-                    texts.add(tiltText);
-
-                    text = lensText();
-                    size = Button.calculateSize(text, null);
-                    if (landscape) {
-                        x += tiltText.getW() + MARGIN + size.width() / 2;
-                        y = MARGIN + size.height() / 2;
-                    } else {
-                        x = MARGIN + size.width() / 2;
-                        y -= tiltText.getH() / 2 + MARGIN + size.height() / 2;
-                    }
-                    lensButton = new Button(x, y, text);
-                    lensButton.listener = new Button.ButtonListener() {
-                        @Override
-                        public void onClick() {
-                            Log.i("FirstFragment", "LENS");
+                            Log.i("FirstFragment", "LEFT");
                             client.sendCommand('l');
                         }
                     };
-                    buttons.add(lensButton);
+                    buttons.add(leftButton);
 
-                    text = "CENTER";
-                    size = Button.calculateSize(text, null);
-                    if (landscape) {
-                        x += lensButton.getW() + MARGIN;
-                    } else {
-                        y -= lensButton.getH() + MARGIN;
-                    }
-                    Button b = new Button(x, y, text);
-                    b.listener = new Button.ButtonListener() {
+                    y += MARGIN + size.height() * 2;
+                    centerButton = new Button(x, y, getCenterText());
+                    centerButton.listener = new Button.ButtonListener() {
                         @Override
                         public void onClick() {
                             Log.i("FirstFragment", "CENTER");
                             client.sendCommand('c');
                         }
                     };
-                    buttons.add(b);
 
-
-
-                    // arrow dimensions
-                    int w = canvas.getWidth() / 8;
-                    int h = w;
-                    int centerX;
-                    int centerY;
-                    if(landscape) {
-                        centerX = canvas.getWidth() - w - ARROW_MARGIN - w / 2 - MARGIN;
-                        centerY = canvas.getHeight() / 2 - h - ARROW_MARGIN - w / 2 - MARGIN;
-                    }
-                    else
-                    {
-                        centerX = canvas.getWidth()  - w - ARROW_MARGIN - w / 2 - MARGIN;
-                        centerY = canvas.getHeight() / 2 + MARGIN + h + ARROW_MARGIN + h / 2;
-                    }
-
-                    b = new Button(Button.calculateRect(centerX,
-                            centerY - h - ARROW_MARGIN,
-                            w,
-                            h), Button.LEFT);
-                    b.listener = new Button.ButtonListener() {
-                        @Override
-                        public void onClick() {
-                            Log.i("FirstFragment", "LEFT");
-                            if(landscape) {
-                                client.sendCommand('a');
-                            }
-                            else
-                            {
-                                client.sendCommand('w');
-                            }
-                        }
-                    };
-                    buttons.add(b);
-
-                    b = new Button(Button.calculateRect(centerX,
-                            centerY + h + ARROW_MARGIN,
-                            w,
-                            h), Button.RIGHT);
-                    b.listener = new Button.ButtonListener() {
+                    buttons.add(centerButton);
+                    y += MARGIN + size.height() * 2;
+                    rightButton = new Button(x, y, getRightText());
+                    rightButton.listener = new Button.ButtonListener() {
                         @Override
                         public void onClick() {
                             Log.i("FirstFragment", "RIGHT");
-                            if(landscape) {
-                                client.sendCommand('d');
-                            }
-                            else
-                            {
-                                client.sendCommand('s');
-                            }
+                            client.sendCommand('r');
                         }
                     };
-                    buttons.add(b);
+                    buttons.add(rightButton);
 
-                    b = new Button(Button.calculateRect(centerX + w + ARROW_MARGIN,
-                            centerY,
-                            w,
-                            h), Button.UP);
-                    b.listener = new Button.ButtonListener() {
-                        @Override
-                        public void onClick() {
-                            Log.i("FirstFragment", "UP");
-                            if(landscape) {
-                                client.sendCommand('w');
-                            }
-                            else
-                            {
-                                client.sendCommand('d');
-                            }
-                        }
-                    };
-                    buttons.add(b);
-
-
-                    b = new Button(Button.calculateRect(centerX - w - ARROW_MARGIN,
-                            centerY,
-                            w,
-                            h), Button.DOWN);
-                    b.listener = new Button.ButtonListener() {
-                        @Override
-                        public void onClick() {
-                            Log.i("FirstFragment", "DOWN");
-                            if(landscape) {
-                                client.sendCommand('s');
-                            }
-                            else
-                            {
-                                client.sendCommand('a');
-                            }
-                        }
-                    };
-                    buttons.add(b);
-
-
-
-                    break;
-                }
-
-
-
-
-                case TRACKING: {
-                    String text = "ABORT";
+                    x -= MARGIN + size.width() * 2;
+                    text = "UPDATE SETTINGS";
                     size = Button.calculateSize(text, null);
-                    if(landscape) {
+                    Button b = new Button(x, MARGIN + size.height() / 2, text);
+                    b.listener = new Button.ButtonListener(){
 
-                        x = canvas.getWidth() / 2 + MARGIN / 2 + size.width() / 2;
-                        y = MARGIN + size.height() / 2;
-                    }
-                    else
-                    {
-                        x = MARGIN + size.width() / 2;
-                        y = canvas.getHeight() - MARGIN - size.height() / 2;
-                    }
-
-                    Button b = new Button(x,
-                            y, text);
-                    b.listener = new Button.ButtonListener() {
                         @Override
                         public void onClick() {
-                            Log.i("FirstFragment", "STOP2");
-                            client.sendCommand('Q');
+                            client.sendSettings();
                         }
                     };
                     buttons.add(b);
 
-                    text = "BACK";
-                    size = Button.calculateSize(text, null);
-                    if(landscape) {
-                        x = canvas.getWidth() / 2 - MARGIN / 2 - size.width() / 2;
-                        y = MARGIN + size.height() / 2;
-                    }
-                    else
-                    {
-                        x = canvas.getWidth() - MARGIN - size.width() / 2;
-                    }
-                    b = new Button(x,
-                            y, text);
-                    b.listener = new Button.ButtonListener() {
-                        @Override
-                        public void onClick() {
-                            Log.i("FirstFragment", "BACK");
-                            client.sendCommand('b');
-                        }
-                    };
-                    buttons.add(b);
                     break;
                 }
             }
@@ -802,16 +518,21 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
 
     }
 
-    String getPanText()
+    String getLeftText()
     {
-        String center = (start_pan == pan) ? "*" : "";
-        return "PAN: " + String.valueOf(pan) + center;
+        String text = (facePosition == FACE_LEFT) ? "*" : "";
+        return "L" + text;
     }
 
-    String getTiltText()
+    String getCenterText() {
+        String text = (facePosition == FACE_CENTER) ? "*" : "";
+        return "C" + text;
+    }
+
+    String getRightText()
     {
-        String center = (start_tilt == tilt) ? "*" : "";
-        return "TILT: " + String.valueOf(tilt) + center;
+        String text = (facePosition == FACE_RIGHT) ? "*" : "";
+        return "R" + text;
     }
 
     public void changeOperation() {
@@ -824,34 +545,6 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         );
     }
 
-    private String lensText() {
-        final int LENS_15 = 0;
-        final int LENS_28 = 1;
-        final int LENS_50 = 2;
-        switch(lens)
-        {
-            case LENS_15:
-                return "17MM";
-            case LENS_28:
-                return "28MM";
-            case LENS_50:
-                return "50MM";
-            default:
-                return "UNKNOWN";
-        }
-    }
-
-    private String landscapeText() {
-        if(landscape)
-        {
-            return "LANDSCAPE";
-        }
-        else
-        {
-            return "PORTRAIT";
-        }
-    }
-
     public void drawGUI(Canvas canvas) {
         Paint p = new Paint();
         p.setStyle(Paint.Style.FILL);
@@ -859,93 +552,28 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         // erase background
         p.setColor(Color.DKGRAY);
         canvas.drawRect(new Rect(0, 0, canvas.getWidth(), canvas.getHeight()), p);
-//        Rect videoRect = new Rect();
 
-        // blitted size of the video
-//        if(landscape) {
-//            videoRect.top = canvas.getHeight() / 2;
-//            videoRect.bottom = canvas.getHeight();
-//            int scaledW = (videoRect.bottom - videoRect.top) * H / W;
-//            videoRect.left = canvas.getWidth() / 2 - scaledW / 2;
-//            videoRect.right = videoRect.left + scaledW;
-//        }
-//        else
-//        {
-//            videoRect.left = 0;
-//            videoRect.right = canvas.getWidth();
-//            // 3:2 aspect ratio
-//            int scaledW = videoRect.width() * 2 / 3;
-//            videoRect.top = canvas.getHeight() / 2 - scaledW / 2;
-//            videoRect.bottom = videoRect.top + scaledW;
-//        }
-
-// position for tracking vs. configuration
         float dstX = canvas.getWidth() / 2;
         float dstY = canvas.getHeight() / 2;
-        if(currentOperation != TRACKING)
-        {
-            if(landscape)
-            {
-                dstY = canvas.getHeight() * 3 / 4;
-            }
-            else
-            {
-                dstY = canvas.getHeight() / 4;
-            }
-        }
 
         Matrix matrix = new Matrix();
         matrix.reset();
         matrix.postTranslate(-W / 2, -H / 2); // Centers source image
-        if(!landscape)
-        {
-            float xScale;
-            float yScale;
-            float dstH;
-            float dstW;
-            //Log.i("FirstFragment", "drawGUI canvas.getHeight()=" + canvas.getHeight() + " dstH=" + dstH + " cropped_w=" + cropped_w);
 
-            if(currentOperation != TRACKING)
-            {
-                dstH = canvas.getHeight() / 2;
-                dstW = dstH * 2 / 3;
-            }
-            else
-            {
-                dstW = canvas.getWidth();
-                dstH = dstW * 3 / 2;
-            }
-            xScale = (float) dstH / W;
-            yScale = (float) dstW / H;
-            matrix.postScale(xScale, -yScale);
-            matrix.postRotate(90);
-            matrix.postTranslate(dstX, dstY);
-        }
-        else
-        {
-            float scale1;
-            float scale2;
-            float dstH;
-            float dstW;
-            float scale;
-            if(currentOperation != TRACKING)
-            {
-                dstW = canvas.getWidth() / 2;
-                dstH = canvas.getHeight() / 2;
-                scale = dstH / W;
-            }
-            else {
-                dstW = canvas.getWidth();
-                dstH = canvas.getHeight();
-                scale = dstW / H;
-            }
-            scale1 = (float) dstH / W;
-            scale2 = (float) dstW / H;
-            matrix.postScale(scale, scale);
-            matrix.postRotate(90);
-            matrix.postTranslate(dstX, dstY);
-        }
+        float scale1;
+        float scale2;
+        float dstH;
+        float dstW;
+        float scale;
+        dstW = canvas.getWidth();
+        scale = dstW / H;
+        dstH = W * scale;
+        dstY = canvas.getHeight() - dstH / 2;
+        matrix.postScale(scale, scale);
+        matrix.postRotate(90);
+        matrix.postTranslate(dstX, dstY);
 
+//        Log.i("x", "drawGUI w=" + videoBitmap.getWidth() + " h=" + videoBitmap.getHeight());
 
         canvas.drawBitmap(videoBitmap,
                 matrix,

@@ -1,20 +1,32 @@
 Truck cam files
 
+enclosure.FCStd: enclosure for the PI & servo driver
+
+
 face_detect2.py: face tracking test program which came from opencv-4.x/samples/dnn/face_detect.py
 
 face_recognizer_fast.onnx: model for face recognition
 yunet.onnx: model for face detection
 
+ffmpeg-kit: library used by Android
+
+generalplus.FCStd: adapt a keychain cam to a CF rod
+
 cam_server.c:
 truckcam.c: face tracker firmware for odroid
 
+truckcam.FCMacro
+libisogrid.py: isogrid script for the enclosure
+
 TruckCam: Android user interface for face tracker firmware
+    - be sure to copy settings.txt & enable storage permissions
+    - different versions of Android require disabling data to 
+        access wifi without internet
+
+settings.txt: settings file for the app
 
 
-
-
-
-
+truckcam.FCMacro
 
 
 

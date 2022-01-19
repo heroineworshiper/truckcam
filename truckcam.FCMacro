@@ -1,0 +1,22 @@
+import libisogrid
+import importlib
+importlib.reload(libisogrid)
+
+
+# bottom panel
+extrudeTris, extrudeSubs = libisogrid.makeGrid(90, \
+    110, \
+    6, \
+    6, \
+    [ 1.0, 1.0 ], \
+    [ 1.0, 1.0 ], \
+    0, \
+    0, \
+    .6, \
+    1)
+extrudeTris.Placement = App.Placement(
+    App.Vector(-55, 45, -19.6),
+    App.Rotation(App.Vector(0, 0, 1), 270))
+
+
+

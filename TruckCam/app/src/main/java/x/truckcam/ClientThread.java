@@ -1,18 +1,28 @@
 package x.truckcam;
 
+import android.graphics.Bitmap;
+import android.graphics.ImageDecoder;
+import android.graphics.drawable.Drawable;
 import android.util.Log;
 
 import com.arthenica.ffmpegkit.ExecuteCallback;
 import com.arthenica.ffmpegkit.FFmpegKit;
 import com.arthenica.ffmpegkit.Session;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.Socket;
+import java.nio.ByteBuffer;
 import java.util.Formatter;
+import java.util.StringTokenizer;
+import java.util.Vector;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -20,12 +30,13 @@ class ClientThread implements Runnable {
     private FirstFragment fragment;
 
     static final String SERVER = "10.0.3.1";
+    //static final String SERVER = "10.0.0.17";
     static final int PORT0 = 1234;
     static final int PORT1 = 1238;
 
     static Socket socket;
     byte[] header = new byte[8];
-    byte[] packet = new byte[65536];
+    byte[] packet = new byte[1024 * 1024];
 
     final int GET_START_CODE0 = 0;
     final int GET_START_CODE1 = 1;
@@ -109,6 +120,82 @@ class ClientThread implements Runnable {
         });
     }
 
+    public void sendSettings() {
+        pool.execute(new Runnable() {
+
+            @Override
+            public void run() {
+                synchronized(this)
+                {
+                    File file = new File("/sdcard/truckcam/settings.txt");
+                    BufferedReader reader = null;
+                    byte[] buffer = new byte[6];
+                    buffer[0] = 's';
+                    buffer[1] = (byte)0xff;
+                    buffer[2] = (byte)0xff;
+                    buffer[3] = (byte)0xff;
+                    buffer[4] = (byte)0xff;
+                    buffer[5] = (byte)0xff;
+                    try {
+                        reader = new BufferedReader(new FileReader(file));
+                        String line = null;
+                        while ((line = reader.readLine()) != null)
+                        {
+//				Log.v("Settings", "loadInternal " + line);
+
+                            StringTokenizer st = new StringTokenizer(line);
+                            Vector<String> strings = new Vector<String>();
+                            while(st.hasMoreTokens())
+                            {
+                                strings.add(st.nextToken());
+                            }
+
+                            // comment or whitespace
+                            if(strings.size() < 2 || strings.get(0).charAt(0) == '#') continue;
+
+                            String key = strings.get(0);
+                            String value = strings.get(1);
+                            if(key.equalsIgnoreCase("DEADBAND"))
+                            {
+                                buffer[1] = (byte)Integer.parseInt(value);
+                            }
+                            else
+                            if(key.equalsIgnoreCase("SPEED"))
+                            {
+                                buffer[2] = (byte)Integer.parseInt(value);
+                            }
+                            else
+                            if(key.equalsIgnoreCase("XY_RADIUS"))
+                            {
+                                buffer[3] = (byte)Integer.parseInt(value);
+                            }
+                            else
+                            if(key.equalsIgnoreCase("SIZE_RADIUS"))
+                            {
+                                buffer[4] = (byte)Integer.parseInt(value);
+                            }
+                            else
+                            if(key.equalsIgnoreCase("COLOR_RADIUS"))
+                            {
+                                buffer[5] = (byte)Integer.parseInt(value);
+                            }
+                        }
+                        reader.close();
+                        socket.getOutputStream().write(buffer);
+
+                    } catch (Exception e) {
+                        Log.i("ClientThread", "sendSettings 1 " + e.toString());
+                        return;
+                    }
+
+
+
+                }
+            }
+        });
+    }
+
+
     @Override
     public void run() {
         fragment.waitForSurface();
@@ -144,26 +231,30 @@ class ClientThread implements Runnable {
 
                 fragment.drawStatus("Reading stream");
 
-                //String command = "-probesize 32 -vcodec h263 -y -i " + stdinPath + " -vcodec rawvideo -f rawvideo -flush_packets 1 -pix_fmt rgb24 " + stdoutPath;
-                //String command = "-probesize 32 -vcodec hvec -y -i " + stdinPath + " -vcodec rawvideo -f rawvideo -flush_packets 1 -pix_fmt rgb24 " + stdoutPath;
-                String command = "-probesize 32 -vcodec mjpeg -y -i " + fragment.stdinPath + " -vcodec rawvideo -f rawvideo -flush_packets 1 -pix_fmt rgb24 " + fragment.stdoutPath;
-                Log.i("ClientThread", "Running " + command);
+                if(FirstFragment.USE_FFMPEG)
+                {
+                    //String command = "-probesize 32 -vcodec h263 -y -i " + stdinPath + " -vcodec rawvideo -f rawvideo -flush_packets 1 -pix_fmt rgb24 " + stdoutPath;
+                    //String command = "-probesize 32 -vcodec hvec -y -i " + stdinPath + " -vcodec rawvideo -f rawvideo -flush_packets 1 -pix_fmt rgb24 " + stdoutPath;
+                    String command = "-probesize 32 -vcodec mjpeg -y -i " + fragment.stdinPath + " -vcodec rawvideo -f rawvideo -flush_packets 1 -pix_fmt rgb24 " + fragment.stdoutPath;
+                    Log.i("ClientThread", "Running " + command);
 
 
-                FFmpegKit.executeAsync(command,
-                        new ExecuteCallback() {
-                            @Override
-                            public void apply(Session session) {
-                            }
-                        });
+                    FFmpegKit.executeAsync(command,
+                            new ExecuteCallback() {
+                                @Override
+                                public void apply(Session session) {
+                                }
+                            });
 
 
-                try {
-                    fragment.ffmpeg_stdin = new FileOutputStream(fragment.stdinPath);
+                    try {
+                        fragment.ffmpeg_stdin = new FileOutputStream(fragment.stdinPath);
 
-                } catch (IOException e) {
-                    e.printStackTrace();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
                 }
+
 
                 // read stream from server
                 byte[] buffer = new byte[1024];
@@ -223,6 +314,10 @@ class ClientThread implements Runnable {
                                     }
                                     break;
                                 case GET_DATA:
+                                    if(counter >= packet.length)
+                                    {
+                                        counter--;
+                                    }
                                     packet[counter++] = (byte)c;
                                     if(counter >= dataSize)
                                     {
@@ -232,7 +327,23 @@ class ClientThread implements Runnable {
                                         if(type == VIJEO)
                                         {
                                             total += dataSize;
-                                            fragment.ffmpeg_stdin.write(packet, 0, dataSize);
+                                            //Log.i("ClientThread", "VIJEO dataSize=" + dataSize);
+                                            if(FirstFragment.USE_FFMPEG) {
+                                                fragment.ffmpeg_stdin.write(packet, 0, dataSize);
+                                            }
+                                            else
+                                            {
+                                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                                                    ImageDecoder.Source imageSource =
+                                                        ImageDecoder.createSource(ByteBuffer.wrap(packet, 0, dataSize));
+                                                    // generates a hardware bitmap
+                                                    Bitmap bitmap = ImageDecoder.decodeBitmap(imageSource);
+//                                                    Log.i("x", "VIJEO w=" + bitmap.getWidth() +
+//                                                            " h=" + bitmap.getHeight() +
+//                                                            " " + bitmap.getColorSpace());
+                                                    fragment.drawVideo(bitmap);
+                                                }
+                                            }
                                         }
                                         else if(type == STATUS)
                                         {
@@ -240,24 +351,11 @@ class ClientThread implements Runnable {
                                             fragment.prevLandscape = fragment.landscape;
 
                                             fragment.currentOperation = packet[0];
-                                            fragment.pan = read_int32(packet, 2);
-                                            fragment.tilt = read_int32(packet, 6);
-                                            fragment.start_pan = read_int32(packet, 10);
-                                            fragment.start_tilt = read_int32(packet, 14);
-                                            fragment.pan_sign = packet[18];
-                                            fragment.tilt_sign = packet[19];
-                                            fragment.lens = packet[20];
-                                            fragment.landscape = (packet[21] == 1 ? true : false);
-                                            fragment.errors = packet[22] & 0xff;
+                                            fragment.facePosition = packet[1];
+                                            fragment.errors = packet[2] & 0xff;
 
                                             Log.i("ClientThread", "GET_DATA" +
                                                     " currentOperation=" + fragment.currentOperation +
-                                                    " pan=" + fragment.pan +
-                                                    " tilt=" + fragment.tilt +
-                                                    " pan_sign=" + fragment.pan_sign +
-                                                    " tilt_sign=" + fragment.tilt_sign +
-                                                    " lens=" + fragment.lens +
-                                                    " landscape=" + fragment.landscape +
                                                     " errors=" + fragment.errors);
 
                                             handleStatus();
@@ -295,4 +393,5 @@ class ClientThread implements Runnable {
             }
         }
     }
+
 }

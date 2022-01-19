@@ -1,6 +1,8 @@
 package x.truckcam;
 
 
+import android.util.Log;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -40,7 +42,7 @@ class DecodeThread implements Runnable
                     pixels = fragment.W * fragment.H - outputOffset / 4;
                 }
 
-//                        Log.i("DecodeThread", "bytes_read=" + bytes_read + " pixels=" + pixels + " outputOffset=" + outputOffset);
+                //Log.i("DecodeThread", "bytes_read=" + bytes_read + " pixels=" + pixels + " outputOffset=" + outputOffset);
                 // transfer pixels to bitmap
                 for (int i = 0; i < pixels; i++) {
                     dst[outputOffset++] = (byte) buffer[i * 3];
