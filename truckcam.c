@@ -83,9 +83,7 @@ unsigned char reader_buffer3[BUFSIZE2];
 // size of the frame in reader_buffer3
 int frame_size;
 static pthread_mutex_t frame_lock;
-static pthread_mutex_t hdmi_lock;
 static sem_t frame_ready_sema;
-struct timespec last_frame_time = { 0 };
 int hdmi_fd = -1;
 char current_path[TEXTLEN] = { 0 };
 
@@ -162,7 +160,8 @@ int open_hdmi(int verbose)
         {
             continue;
         }
-        
+
+// test the W & H to find the right camera
         struct v4l2_format v4l2_params;
         v4l2_params.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         ioctl(fd2, VIDIOC_G_FMT, &v4l2_params);
@@ -185,20 +184,170 @@ int open_hdmi(int verbose)
                 v4l2_params.fmt.pix.height);
         }
 
-        if(v4l2_params.fmt.pix.width == RAW_W &&
-            v4l2_params.fmt.pix.height == RAW_H)
+        if(v4l2_params.fmt.pix.width != RAW_W ||
+            v4l2_params.fmt.pix.height != RAW_H)
         {
+            close(fd2);
+            fd2 = -1;
+        }
+        
+        
+// probe picture controls
+        if(fd2 >= 0)
+        {
+		    for(int j = V4L2_CID_BASE; j < V4L2_CID_LASTP1; j++)
+		    {
+                struct v4l2_queryctrl arg;
+			    bzero(&arg, sizeof(arg));
+			    arg.id = j;
+                if(!ioctl(fd2, VIDIOC_QUERYCTRL, &arg))
+                {
+                    printf("hdmi_thread %d id=%x min=%d max=%d step=%d default=%d %s\n", 
+                        __LINE__, 
+                        arg.id, 
+                        arg.minimum,
+                        arg.maximum,
+                        arg.step,
+                        arg.default_value,
+                        arg.name);
+                }
+            }
+
+// backlight compensation
+            struct v4l2_control ctrl_arg;
+            ctrl_arg.id = 0x98091c;
+            if(ioctl(fd2, VIDIOC_G_CTRL, &ctrl_arg))
+            {
+                printf("open_hdmi %d VIDIOC_G_CTRL failed\n", __LINE__);
+            }
+            else
+            {
+                printf("hdmi_thread %d got backlight compensation %d\n",
+                    __LINE__,
+                    ctrl_arg.value);
+            }
+
+            ctrl_arg.id = 0x98091c;
+            ctrl_arg.value = 0;
+            if(ioctl(fd2, VIDIOC_S_CTRL, &ctrl_arg) < 0)
+            {
+                printf("hdmi_thread %d VIDIOC_S_CTRL failed\n",
+                    __LINE__);
+
+// skip the device
+                close(fd2);
+                fd2 = -1;
+            }
+            else
+            {
+                printf("hdmi_thread %d setting backlight compensation to %d\n",
+                    __LINE__,
+                    ctrl_arg.value);
+            }
+        }
+
+//         if(fd2 >= 0)
+//         {
+// // brightness
+//             struct v4l2_control ctrl_arg;
+//             ctrl_arg.id = 0x980900;
+//             ctrl_arg.value = 255;
+//             if(ioctl(fd2, VIDIOC_S_CTRL, &ctrl_arg) < 0)
+//             {
+//                 printf("hdmi_thread %d VIDIOC_S_CTRL failed\n",
+//                     __LINE__);
+//             }
+//         }
+
+//         if(fd2 >= 0)
+//         {
+// // gamma
+//             struct v4l2_control ctrl_arg;
+//             ctrl_arg.id = 0x980910;
+//             ctrl_arg.value = 20;
+//             if(ioctl(fd2, VIDIOC_S_CTRL, &ctrl_arg) < 0)
+//             {
+//                 printf("hdmi_thread %d VIDIOC_S_CTRL failed\n",
+//                     __LINE__);
+//             }
+//         }
+
+//         if(fd2 >= 0)
+//         {
+// // contrast
+//             struct v4l2_control ctrl_arg;
+//             ctrl_arg.id = 0x980901;
+//             ctrl_arg.value = 16;
+//             if(ioctl(fd2, VIDIOC_S_CTRL, &ctrl_arg) < 0)
+//             {
+//                 printf("hdmi_thread %d VIDIOC_S_CTRL failed\n",
+//                     __LINE__);
+//             }
+//         }
+
+        if(fd2 >= 0)
+        {
+// saturation
+            struct v4l2_control ctrl_arg;
+            ctrl_arg.id = 0x980902;
+            if(ioctl(fd2, VIDIOC_G_CTRL, &ctrl_arg) < 0)
+            {
+                printf("hdmi_thread %d VIDIOC_G_CTRL failed\n",
+                    __LINE__);
+            }
+            else
+            {
+                printf("hdmi_thread %d got saturation %d\n",
+                    __LINE__,
+                    ctrl_arg.value);
+            }
+
+
+            ctrl_arg.value = 127;
+            if(ioctl(fd2, VIDIOC_S_CTRL, &ctrl_arg) < 0)
+            {
+                printf("hdmi_thread %d VIDIOC_S_CTRL failed\n",
+                    __LINE__);
+            }
+            else
+            {
+                printf("hdmi_thread %d setting saturation to %d\n",
+                    __LINE__,
+                    ctrl_arg.value);
+            }
+        }
+
+
+        if(fd2 >= 0)
+        {
+// codec
+            struct v4l2_format v4l2_params;
+            v4l2_params.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            ioctl(fd2, VIDIOC_G_FMT, &v4l2_params);
+
+// codec only works for HDMI
+#ifdef RAW_HDMI
+            v4l2_params.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
+#else
+            v4l2_params.fmt.pix.pixelformat = V4L2_PIX_FMT_MJPEG;
+#endif
+            if(ioctl(fd2, VIDIOC_S_FMT, &v4l2_params) < 0)
+            {
+//              printf("hdmi_thread %d: VIDIOC_S_FMT failed\n",
+//                  __LINE__);
+            }
+
+
             if(verbose)
             {
                 printf("open_hdmi %d opened %s\n", __LINE__, paths.at(i));
                 strcpy(current_path, paths.at(i));
             }
+
+
+
+
             break;
-        }
-        else
-        {
-            close(fd2);
-            fd2 = -1;
         }
     }
 //printf("open_hdmi %d fd2=%d\n", __LINE__, fd2);
@@ -229,15 +378,9 @@ void* hdmi_thread(void *ptr)
     {
         if(hdmi_fd < 0)
         {
-
-            pthread_mutex_lock(&hdmi_lock);
-            
             hdmi_fd = open_hdmi(verbose);
-
             if(hdmi_fd < 0)
             {
-                clock_gettime(CLOCK_MONOTONIC, &last_frame_time);
-                pthread_mutex_unlock(&hdmi_lock);
                 if(!(error_flags & VIDEO_DEVICE_ERROR))
                 {
                     printf("hdmi_thread %d: no video device\n",
@@ -249,77 +392,26 @@ void* hdmi_thread(void *ptr)
             }
             else
             {
-
-//                     printf("hdmi_thread %d: opened %s\n",
-//                         __LINE__,
-//                         string);
-
-                struct v4l2_format v4l2_params;
-                v4l2_params.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-                ioctl(hdmi_fd, VIDIOC_G_FMT, &v4l2_params);
+    //          printf("hdmi_thread %d: opened %s\n",
+    //              __LINE__,
+    //              string);
 
 
-// reject it if it's the wrong resolution, since it's the laptop webcam
-                if(v4l2_params.fmt.pix.width != RAW_W ||
-                    v4l2_params.fmt.pix.height != RAW_H)
-                {
-                    if(!(error_flags & VIDEO_DEVICE_ERROR))
-                    {
-                        printf("hdmi_thread %d wrong camera\n",
-                            __LINE__);
-                    }
-                    error_flags |= VIDEO_DEVICE_ERROR;
-                    send_error();
-                    close(hdmi_fd);
-                    hdmi_fd = -1;
-                    clock_gettime(CLOCK_MONOTONIC, &last_frame_time);
-                    pthread_mutex_unlock(&hdmi_lock);
-                    sleep(1);
-                }
-                else
-                {
-                    if((error_flags & VIDEO_DEVICE_ERROR))
-                    {
-//                         printf("hdmi_thread %d: opened %s\n",
-//                             __LINE__,
-//                             current_path);
-                        error_flags &= ~VIDEO_DEVICE_ERROR;
-                        send_error();
-                    }
-
-                    v4l2_params.fmt.pix.width = RAW_W;
-                    v4l2_params.fmt.pix.height = RAW_H;
-
-#ifdef RAW_HDMI
-                    v4l2_params.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
-#else
-                    v4l2_params.fmt.pix.pixelformat = V4L2_PIX_FMT_MJPEG;
-#endif
-                    if(ioctl(hdmi_fd, VIDIOC_S_FMT, &v4l2_params) < 0)
-                    {
-//                         printf("hdmi_thread %d: VIDIOC_S_FMT failed\n",
-//                             __LINE__);
-                    }
-                }
-            }
-
-            if(hdmi_fd >= 0)
-            {
-//                     struct v4l2_jpegcompression jpeg_opts;
-//                     if(ioctl(hdmi_fd, VIDIOC_G_JPEGCOMP, &jpeg_opts) < 0)
-//                     {
-//                         printf("hdmi_thread %d: VIDIOC_G_JPEGCOMP failed\n",
-//                             __LINE__);
-//                     }
-//                     printf("hdmi_thread %d: quality=%d\n",
-//                         __LINE__,
-//                         jpeg_opts.quality);
-//                     
-//                     if(ioctl(hdmi_fd, VIDIOC_S_JPEGCOMP, &jpeg_opts) < 0)
-//                     {
-//                         printf("hdmi_thread %d: VIDIOC_S_JPEGCOMP failed\n",
-//                             __LINE__);
-//                     }
+    //          struct v4l2_jpegcompression jpeg_opts;
+    //          if(ioctl(fd2, VIDIOC_G_JPEGCOMP, &jpeg_opts) < 0)
+    //          {
+    //              printf("hdmi_thread %d: VIDIOC_G_JPEGCOMP failed\n",
+    //                  __LINE__);
+    //          }
+    //          printf("hdmi_thread %d: quality=%d\n",
+    //              __LINE__,
+    //              jpeg_opts.quality);
+    //          
+    //          if(ioctl(fd2, VIDIOC_S_JPEGCOMP, &jpeg_opts) < 0)
+    //          {
+    //              printf("hdmi_thread %d: VIDIOC_S_JPEGCOMP failed\n",
+    //                  __LINE__);
+    //          }
 
                 struct v4l2_requestbuffers requestbuffers;
                 requestbuffers.count = HDMI_BUFFERS;
@@ -351,9 +443,9 @@ void* hdmi_thread(void *ptr)
 					            MAP_SHARED,
 					            hdmi_fd,
 					            buffer.m.offset);
-//                             printf("hdmi_thread %d: allocated buffer size=%d\n",
-//                                 __LINE__,
-//                                 buffer.length);
+    //                             printf("hdmi_thread %d: allocated buffer size=%d\n",
+    //                                 __LINE__,
+    //                                 buffer.length);
                             if(ioctl(hdmi_fd, VIDIOC_QBUF, &buffer) < 0)
                             {
                                 printf("hdmi_thread %d: VIDIOC_QBUF failed\n",
@@ -370,10 +462,9 @@ void* hdmi_thread(void *ptr)
                         __LINE__);
                 }
                 clock_gettime(CLOCK_MONOTONIC, &fps_time1);
-                clock_gettime(CLOCK_MONOTONIC, &last_frame_time);
-                pthread_mutex_unlock(&hdmi_lock);
             }
         }
+
 
 
         if(hdmi_fd >= 0)
@@ -382,9 +473,6 @@ void* hdmi_thread(void *ptr)
 		    bzero(&buffer, sizeof(buffer));
             buffer.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 		    buffer.memory = V4L2_MEMORY_MMAP;
-            pthread_mutex_lock(&hdmi_lock);
-            clock_gettime(CLOCK_MONOTONIC, &last_frame_time);
-            pthread_mutex_unlock(&hdmi_lock);
 
 // select seems to protect against disconnects
             fd_set fds;
@@ -399,10 +487,8 @@ void* hdmi_thread(void *ptr)
                 printf("hdmi_thread %d: V4L2 died\n", __LINE__);
                 error_flags |= VIDEO_BUFFER_ERROR;
                 send_error();
-                pthread_mutex_lock(&hdmi_lock);
                 close(hdmi_fd);
                 hdmi_fd = -1;
-                pthread_mutex_unlock(&hdmi_lock);
                 sleep(1);
             }
             else
@@ -414,17 +500,12 @@ void* hdmi_thread(void *ptr)
                         __LINE__);
                     error_flags |= VIDEO_BUFFER_ERROR;
                     send_error();
-                    pthread_mutex_lock(&hdmi_lock);
                     close(hdmi_fd);
                     hdmi_fd = -1;
-                    pthread_mutex_unlock(&hdmi_lock);
                     sleep(1);
                 }
                 else
                 {
-                    pthread_mutex_lock(&hdmi_lock);
-                    clock_gettime(CLOCK_MONOTONIC, &last_frame_time);
-                    pthread_mutex_unlock(&hdmi_lock);
                     error_flags &= ~VIDEO_BUFFER_ERROR;
                     error_flags &= ~VIDEO_DEVICE_ERROR;
 //                  printf("hdmi_thread %d\n", __LINE__);
@@ -487,6 +568,25 @@ void* hdmi_thread(void *ptr)
                             __LINE__);
                     }
 
+
+
+
+// reset saturation
+                    struct v4l2_control ctrl_arg;
+                    ctrl_arg.id = 0x980902;
+                    ctrl_arg.value = 127;
+                    ioctl(hdmi_fd, VIDIOC_S_CTRL, &ctrl_arg);
+// reset backlight compensation
+                    ctrl_arg.id = 0x98091c;
+                    ctrl_arg.value = 0;
+                    ioctl(hdmi_fd, VIDIOC_S_CTRL, &ctrl_arg);
+
+
+
+
+
+
+
                     frame_count++;
                     struct timeval time2;
                     gettimeofday(&time2, 0);
@@ -507,42 +607,12 @@ void* hdmi_thread(void *ptr)
     }
 }
 
-// required ever since video4linux was started
-// void* hdmi_watchdog(void *ptr)
-// {
-//     while(1)
-//     {
-//         sleep(1);
-//         pthread_mutex_lock(&hdmi_lock);
-//         if(hdmi_fd >= 0)
-//         {
-//             struct timespec time1;
-//             clock_gettime(CLOCK_MONOTONIC, &time1);
-//             double delta = (double)((time1.tv_sec * 1000 + time1.tv_nsec / 1000000) -
-//                 (last_frame_time.tv_sec * 1000 + last_frame_time.tv_nsec / 1000000)) / 1000;
-//             pthread_mutex_unlock(&hdmi_lock);
-//             if(delta > 5)
-//             {
-//                 pthread_mutex_lock(&hdmi_lock);
-//                 printf("hdmi_watchdog %d: drop kicking it\n", __LINE__);
-//                 close(hdmi_fd);
-//                 hdmi_fd = -1;
-//                 pthread_mutex_unlock(&hdmi_lock);
-//             }
-//         }
-//         else
-//         {
-//             pthread_mutex_unlock(&hdmi_lock);
-//         }
-//     }
-// }
 
 void init_hdmi()
 {
 	pthread_mutexattr_t attr;
 	pthread_mutexattr_init(&attr);
 	pthread_mutex_init(&frame_lock, &attr);
-	pthread_mutex_init(&hdmi_lock, &attr);
     sem_init(&frame_ready_sema, 0, 0);
 
     pthread_t x;
@@ -1059,69 +1129,69 @@ int main(int argc, char** argv)
                         }
                     }
 
-                    if(closest_index >= 0)
-                    {
-// test size
-                        int w = faces.at<float>(closest_index, 2);
-                        int h = faces.at<float>(closest_index, 3);
-                        if(w >= prev_w - prev_w * size_radius / 100 &&
-                            w <= prev_w + prev_w * size_radius / 100 &&
-                            h >= prev_h - prev_h * size_radius / 100 &&
-                            h <= prev_h + prev_h * size_radius / 100)
-                        {
-// test color
-                            double accum_r = 0;
-                            double accum_g = 0;
-                            double accum_b = 0;
-// new top left
-                            int x = faces.at<float>(closest_index, 0);
-                            int y = faces.at<float>(closest_index, 1);
-                            for(int i = 0; i < h; i++)
-                            {
-                                unsigned char *row = (unsigned char*)scaled_image.ptr(0) + 
-                                    i * SCALED_W * 3 +
-                                    x * 3;
-                                for(int j = 0; j < w; j++)
-                                {
-                                    accum_r += *row++;
-                                    accum_g += *row++;
-                                    accum_b += *row++;
-                                }
-                            }
-                            accum_r /= w * h;
-                            accum_g /= w * h;
-                            accum_b /= w * h;
-
-                            double color_distance = hypot(accum_r - prev_r,
-                                accum_g - prev_g);
-                            color_distance = hypot(color_distance, 
-                                accum_b - prev_b);
-            //                printf("main %d color_distance=%f\n", __LINE__, color_distance);
-                            if(color_distance <= 255 * color_radius / 100)
-                            {
-                                best_index = closest_index;
-                            }
-                            else
-                            {
-// reset the previous frame
-                                prev_x = -1;
-                                prev_y = -1;
-                                closest_index = -1;
-                                printf("main %d not within COLOR_RADIUS\n", __LINE__);
-                            }
-                        }
-                        else
-                        {
-                            printf("main %d not within SIZE_RADIUS\n", __LINE__);
-                        }
-                    }
-                    else
-                    {
-                        printf("main %d not within XY_RADIUS\n", __LINE__);
-                    }
+//                     if(closest_index >= 0)
+//                     {
+// // test size
+//                         int w = faces.at<float>(closest_index, 2);
+//                         int h = faces.at<float>(closest_index, 3);
+//                         if(w >= prev_w - prev_w * size_radius / 100 &&
+//                             w <= prev_w + prev_w * size_radius / 100 &&
+//                             h >= prev_h - prev_h * size_radius / 100 &&
+//                             h <= prev_h + prev_h * size_radius / 100)
+//                         {
+// // test color
+//                             double accum_r = 0;
+//                             double accum_g = 0;
+//                             double accum_b = 0;
+// // new top left
+//                             int x = faces.at<float>(closest_index, 0);
+//                             int y = faces.at<float>(closest_index, 1);
+//                             for(int i = 0; i < h; i++)
+//                             {
+//                                 unsigned char *row = (unsigned char*)scaled_image.ptr(0) + 
+//                                     i * SCALED_W * 3 +
+//                                     x * 3;
+//                                 for(int j = 0; j < w; j++)
+//                                 {
+//                                     accum_r += *row++;
+//                                     accum_g += *row++;
+//                                     accum_b += *row++;
+//                                 }
+//                             }
+//                             accum_r /= w * h;
+//                             accum_g /= w * h;
+//                             accum_b /= w * h;
+// 
+//                             double color_distance = hypot(accum_r - prev_r,
+//                                 accum_g - prev_g);
+//                             color_distance = hypot(color_distance, 
+//                                 accum_b - prev_b);
+//             //                printf("main %d color_distance=%f\n", __LINE__, color_distance);
+//                             if(color_distance <= 255 * color_radius / 100)
+//                             {
+//                                 best_index = closest_index;
+//                             }
+//                             else
+//                             {
+// // reset the previous frame
+//                                 prev_x = -1;
+//                                 prev_y = -1;
+//                                 closest_index = -1;
+//                                 printf("main %d not within COLOR_RADIUS\n", __LINE__);
+//                             }
+//                         }
+//                         else
+//                         {
+//                             printf("main %d not within SIZE_RADIUS\n", __LINE__);
+//                         }
+//                     }
+//                     else
+//                     {
+//                         printf("main %d not within XY_RADIUS\n", __LINE__);
+//                     }
                 }
 
-// size test failed.  Search based on largest size
+// XY test failed.  Search based on largest size
                 if(best_index < 0)
                 {
                     int max_size = 0;
@@ -1172,37 +1242,37 @@ int main(int argc, char** argv)
 
                 if(best_index >= 0)
                 {
-// update history data
-                    double accum_r = 0;
-                    double accum_g = 0;
-                    double accum_b = 0;
+// update chroma data
                     int x = faces.at<float>(best_index, 0);
                     int y = faces.at<float>(best_index, 1);
                     int w = faces.at<float>(best_index, 2);
                     int h = faces.at<float>(best_index, 3);
-                    for(int i = 0; i < h; i++)
-                    {
-                        unsigned char *row = (unsigned char*)scaled_image.ptr(0) + 
-                            i * SCALED_W * 3 +
-                            x * 3;
-                        for(int j = 0; j < w; j++)
-                        {
-                            accum_r += *row++;
-                            accum_g += *row++;
-                            accum_b += *row++;
-                        }
-                    }
-                    accum_r /= w * h;
-                    accum_g /= w * h;
-                    accum_b /= w * h;
+//                     double accum_r = 0;
+//                     double accum_g = 0;
+//                     double accum_b = 0;
+//                     for(int i = 0; i < h; i++)
+//                     {
+//                         unsigned char *row = (unsigned char*)scaled_image.ptr(0) + 
+//                             i * SCALED_W * 3 +
+//                             x * 3;
+//                         for(int j = 0; j < w; j++)
+//                         {
+//                             accum_r += *row++;
+//                             accum_g += *row++;
+//                             accum_b += *row++;
+//                         }
+//                     }
+//                     accum_r /= w * h;
+//                     accum_g /= w * h;
+//                     accum_b /= w * h;
+//                     prev_r = accum_r;
+//                     prev_g = accum_g;
+//                     prev_b = accum_b;
+//                     prev_w = w;
+//                     prev_h = h;
 
                     prev_x = x + w / 2;
                     prev_y = y + h / 2;
-                    prev_w = w;
-                    prev_h = h;
-                    prev_r = accum_r;
-                    prev_g = accum_g;
-                    prev_b = accum_b;
 
                     float face_x = (float)x / SCALED_W;
                     float face_y = (float)y / SCALED_H;
