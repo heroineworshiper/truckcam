@@ -55,7 +55,9 @@
 
 // use face size instead of recognition model
 #define USE_SIZE
-// use ffmpeg for encoding
+
+
+// use ffmpeg for encoding preview
 //#define USE_FFMPEG
 
 #define CLAMP(x, y, z) ((x) = ((x) < (y) ? (y) : ((x) > (z) ? (z) : (x))))
