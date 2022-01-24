@@ -470,6 +470,7 @@ void* web_server_writer(void *ptr)
 		close(connection->fd);
         connection->fd = -1;
 		connection->is_writing = 0;
+        server_output = -1;
         pthread_mutex_unlock(&www_mutex);
 	}
 }

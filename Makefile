@@ -10,6 +10,7 @@ PKGCONFIG_LIBS := -L/usr/local/lib \
 	-lopencv_bgsegm \
 	-lopencv_bioinspired \
 	-lopencv_core \
+	-lopencv_dnn \
 	-lopencv_objdetect \
 	-lopencv_imgproc \
 	-lopencv_imgcodecs
