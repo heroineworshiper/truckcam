@@ -53,6 +53,11 @@
 // minimum frame rate is required to prevent wifi stuttering
 #define FPS 11
 
+// use object detection instead of face tracking
+//#define USE_YOLO
+// use face instead of pose
+#define USE_FACE
+
 // use face size instead of recognition model
 #define USE_SIZE
 

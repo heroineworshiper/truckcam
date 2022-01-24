@@ -50,6 +50,7 @@
 #include "truckcam.h"
 
 using namespace cv;
+using namespace cv::dnn;
 using namespace std;
 
 
@@ -954,6 +955,21 @@ void dump_settings()
     printf("COLOR_RADIUS %d\n", (int)color_radius);
 }
 
+static std::vector<float> normalization(const std::vector<float>& feature)
+{
+    std::vector<float> ret;
+    float sum = 0.0;
+    for(int i = 0; i < (int)feature.size(); i++)
+    {
+        sum += feature[i] * feature[i];
+    }
+    sum = sqrt(sum);
+    for(int i = 0; i < (int)feature.size(); i++)
+    {
+        ret.push_back(feature[i] / sum);
+    }
+    return ret;
+}
 
 int main(int argc, char** argv)
 {
@@ -982,6 +998,18 @@ int main(int argc, char** argv)
 // set threading for the odroid
     setNumThreads(4);
 
+
+#ifdef USE_YOLO
+//    Net net = readNet("yolov3.weights", "yolov3.cfg");
+    Net net = readNet("yolov4-tiny.weights", "yolov4-tiny.cfg");
+    std::vector<String> outNames = net.getUnconnectedOutLayersNames();
+    for(int i = 0; i < outNames.size(); i++)
+    {
+        printf("main %d %s\n", __LINE__, outNames[i].c_str());
+    }
+#endif
+
+#ifdef USE_FACE
     Ptr<FaceDetectorYN> detector = FaceDetectorYN::create(DETECT_MODEL, 
         "", 
         Size(320, 320), 
@@ -1019,7 +1047,7 @@ int main(int argc, char** argv)
 
 
     detector->setInputSize(Size(SCALED_W, SCALED_H));
-
+#endif // USE_FACE
 
 // DEBUG disable to load test image
     init_hdmi();
@@ -1091,6 +1119,55 @@ int main(int argc, char** argv)
                 Size(SCALED_W, SCALED_H),
 //                INTER_NEAREST);
                 INTER_LINEAR); // no speed difference
+
+#ifdef USE_YOLO
+            Mat inputBlob = blobFromImage(scaled_image, 
+                1.0, 
+                Size(416, 416), 
+                Scalar(0, 0, 0), 
+                false, 
+                CV_8U);
+            net.setInput(inputBlob);
+            std::vector<Mat> outs;
+            UPDATE_PROFILE
+            net.forward(outs, outNames);
+            UPDATE_PROFILE
+
+            static std::vector<int> outLayers = net.getUnconnectedOutLayers();
+            static std::string outLayerType = net.getLayer(outLayers[0])->type;
+            printf("main %d delta=%f layer=%d outs=%d outLayerType=%s\n", 
+                __LINE__, 
+                delta,
+                outLayers[0],
+                outs.size(),
+                outLayerType.c_str());
+
+            for(int i = 0; i < outs.size(); i++)
+            {
+                float* data = (float*)outs[i].data;
+                int total = 0;
+                for(int j = 0; j < outs[i].rows; j++)
+                {
+                    Mat scores = outs[i].row(j).colRange(5, outs[i].cols);
+                    Point classIdPoint;
+                    double confidence;
+                    minMaxLoc(scores, 0, &confidence, 0, &classIdPoint);
+                    if(confidence > 0.5)
+                    {
+                        total++;
+                    }
+                    data += outs[i].cols;
+                }
+                printf("main %d outs[%d].rows=%d total=%d\n", 
+                    __LINE__, 
+                    i, 
+                    outs[i].total(),
+                    total);
+            }
+
+#endif // USE_YOLO
+
+#ifdef USE_FACE
             Mat faces;
             detector->detect(scaled_image, faces);
 //printf("main %d\n", __LINE__);
@@ -1324,6 +1401,11 @@ int main(int argc, char** argv)
                     }
                 }
             }
+#endif // USE_FACE
+
+
+
+
 
             fps_frames++;
             struct timespec fps_time2;
@@ -1336,7 +1418,9 @@ int main(int argc, char** argv)
                 fps_time1 = fps_time2;
                 fps = fps_frames / delta;
                 fps_frames = 0;
-//                printf("main %d fps=%f\n", __LINE__, fps);
+                printf("main %d fps=%f\n", 
+                    __LINE__, 
+                    fps);
             }
 
 // 100ms
@@ -1347,7 +1431,9 @@ int main(int argc, char** argv)
             if(server_output >= 0)
             {
 // draw the results
+#ifdef USE_FACE
                 visualize(scaled_image, scores, faces, fps, best_index);
+#endif
 
 #ifdef USE_FFMPEG
 // send to ffmpeg
