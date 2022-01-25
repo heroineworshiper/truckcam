@@ -19,7 +19,7 @@ truckcam.FCMacro
 libisogrid.py: isogrid script for the enclosure
 
 TruckCam: Android user interface for face tracker firmware
-    - be sure to copy settings.txt & enable storage permissions
+    - be sure to copy settings.txt to /sdcard/truckcam/ & enable storage permissions
     - different versions of Android require disabling data to 
         access wifi without internet
 
