@@ -1,4 +1,4 @@
-Stuff related to the truck's camera mount.
+Stuff that makes the truck's camera mount track subjects.
 
 enclosure.FCStd: enclosure for a raspberri PI & servo driver
 
