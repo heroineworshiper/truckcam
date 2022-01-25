@@ -1,6 +1,6 @@
-Truck cam files
+Stuff related to the truck's camera mount.
 
-enclosure.FCStd: enclosure for the PI & servo driver
+enclosure.FCStd: enclosure for a raspberri PI & servo driver
 
 
 face_detect2.py: face tracking test program which came from opencv-4.x/samples/dnn/face_detect.py
@@ -13,7 +13,7 @@ ffmpeg-kit: library used by Android
 generalplus.FCStd: adapt a keychain cam to a CF rod
 
 cam_server.c:
-truckcam.c: face tracker firmware for odroid
+truckcam.c: face tracker firmware
 
 truckcam.FCMacro
 libisogrid.py: isogrid script for the enclosure
