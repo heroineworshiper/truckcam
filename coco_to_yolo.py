@@ -136,8 +136,9 @@ class Coco():
     #                     (image['file_name'], image_w, image_h, object_x, object_y, object_w, object_h))
                     image_object = ImageObject()
                     image_object.category_id = old_category
-                    image_object.box = [float(object_x) / image_w,
-                        float(object_y) / image_h,
+# YOLOV5 expects the center x, center y, w, h in fractions of the image size
+                    image_object.box = [float(object_x + object_w) / 2 / image_w,
+                        float(object_y + object_h) / 2 / image_h,
                         float(object_w) / image_w,
                         float(object_h) / image_h]
                     if image_id not in new_images:
