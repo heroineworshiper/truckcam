@@ -32,7 +32,7 @@ coco_to_tflow.py: extract training data from the COCO dataset for tensorflow
 
 coco_to_pytorch.py: extract training data from the COCO dataset for pytorch/YOLO
 
-model_maker.py: train an efficientdet_lite object dector for tensorflow
+model_maker.py: train an efficientdet_lite object detector for tensorflow
 
 efficientlion0.tflite.1000.300epoch: best tensorflow model so far, for
     tracking humans.  Runs in 
