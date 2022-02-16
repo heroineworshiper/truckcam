@@ -26,6 +26,7 @@ a raspberry pi.  The raspberry pi runs the tracking firmware & sends
 commands over SPI to the truck's camera board.  SPI goes from SPI0_MOSI
 to SWDIO on the cam board, SPI0_CLK goes to SWCLK on the cam board.
 
+--------------------------------------------------------------------------------
 
 Neural network training bits:
 
