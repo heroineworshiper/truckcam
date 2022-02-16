@@ -44,8 +44,8 @@ enclosure.FCStd: enclosure for a raspberri PI 4B & servo driver
 
 face_detect2.py: face tracking test program which came from opencv-4.x/samples/dnn/face_detect.py
 
-face_recognizer_fast.onnx: model for face recognition
-yunet.onnx: model for face detection
+face_recognizer_fast.onnx: model for face recognition using opencv DNN
+yunet.onnx: model for face detection using opencv DNN
 
 ffmpeg-kit: library used by Android
 
