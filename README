@@ -27,6 +27,7 @@ commands over SPI to the truck's camera board.  SPI goes from SPI0_MOSI
 to SWDIO on the cam board, SPI0_CLK goes to SWCLK on the cam board.
 
 
+Neural network training bits:
 
 coco_to_tflow.py: extract training data from the COCO dataset for tensorflow
 
@@ -38,9 +39,21 @@ efficientlion0.tflite.1000.300epoch: best tensorflow model so far, for
     tracking humans.  Runs in 
     https://github.com/tensorflow/examples/tree/master/lite/examples/object_detection/raspberry_pi/detect.py
 
+--------------------------------------------------------------------------------
+
+Hardware:
 
 enclosure.FCStd: enclosure for a raspberri PI 4B & servo driver
 
+generalplus.FCStd: adapt a keychain cam to a CF rod
+
+truckcam.FCMacro
+libisogrid.py: isogrid script for the enclosure
+
+
+--------------------------------------------------------------------------------
+
+Face tracking:
 
 face_detect2.py: face tracking test program which came from opencv-4.x/samples/dnn/face_detect.py
 
@@ -49,14 +62,9 @@ yunet.onnx: model for face detection using opencv DNN
 
 ffmpeg-kit: library used by Android
 
-generalplus.FCStd: adapt a keychain cam to a CF rod
-
 cam_server.c:
 truckcam.c: face tracker firmware for a raspberry PI 4B
     Uses the opencv DNN backend
-
-truckcam.FCMacro
-libisogrid.py: isogrid script for the enclosure
 
 TruckCam: Android user interface for face tracker firmware
     - be sure to copy settings.txt to /sdcard/truckcam/ & enable storage permissions
