@@ -20,7 +20,7 @@ old_category = 1
 new_category = 0
 # limit the maximum number of objects for testing
 #max_objects = -1
-max_objects = 100
+max_objects = 1000
 
 class ImageObject:
     def __init__(self):
@@ -182,6 +182,9 @@ if __name__ == "__main__":
     print("JSON file: %s" % input_json)
     print("Source image dir: %s" % input_dir)
     print("Destination dir: %s" % output_dir)
+    print("Source category ID: %d" % old_category)
+    print("Dest category index: %d" % new_category)
+    print("Max objects: %d" % max_objects)
     
     value = input('Press Enter to continue.')
 

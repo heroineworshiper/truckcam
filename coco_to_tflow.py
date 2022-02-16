@@ -7,7 +7,7 @@
 # set max_objects for testing on a smaller data set
 
 # python3 ~/truckcam/coco_to_tflow.py annotations/instances_val2017.json val2017/ val_person_100
-# python3 ~/truckcam/coco_to_tflow.py annotations/instances_train2017.json train2017/ train_person_100
+# python3 ~/truckcam/coco_to_tflow.py annotations/instances_train2017.json train2017/ train_person_500
 
 import os
 import sys
@@ -15,12 +15,13 @@ import fileinput
 import shutil
 import json
 from pathlib import Path
+import random
 
 old_category = 1
 new_category = 'Lion'
 # limit the maximum number of objects for testing
 #max_objects = -1
-max_objects = 100
+max_objects = 500
 
 class ImageObject:
     def __init__(self):
@@ -105,20 +106,27 @@ class Coco():
         # bounding boxes -> image, category
         self._process_segmentations()
 
-        # Want a .txt file for each image with the desired categories in it
-        print("old images=%d" % len(self.images.items()))
+# Want a .xml file for each image with the desired objects in it
+        total_src_images = len(self.images.items())
+        print("total_src_images=%d" % total_src_images)
 
 # count the old objects
-        count = 0
+        total_src_objects = 0
         for key, value in self.segmentations.items():
-            count += len(value)
-        print("old objects=%d" % count)
+            total_src_objects += len(value)
+        print("total_src_objects=%d" % total_src_objects)
+
+# randomize the source objects
+        print("Randomizing source objects")
+        keys = list(self.segmentations.keys())
+        random.shuffle(keys)
 
 # read the old objects
         count = 0
         new_images = dict()
 # 1 segmentation key for each image with multiple objects in it
-        for key, value in self.segmentations.items():
+        for key in keys:
+            value = self.segmentations[key]
             #print("seg=%s, %d" % (key, len(value)))
             for object in value:
                 if object['category_id'] == old_category and object['iscrowd'] == 0:
@@ -155,6 +163,7 @@ class Coco():
 
         print("new images=%d" % len(new_images.items()))
         print("new objects=%d" % count)
+        print("Writing images")
         
         if True:
             for key, value in new_images.items():

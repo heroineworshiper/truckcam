@@ -1,4 +1,4 @@
-Stuff that makes the truck's camera mount track subjects.
+Attempts to make the robot mounted camera track subjects.
 
 
 Copyright (C) 2021-2022 Adam Williams <broadcast at earthling dot net>
@@ -17,7 +17,26 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
+--------------------------------------------------------------------------------
 
+
+A webcam is mounted on a lower part of the camera pole while the mane
+gopro goes on top.  The webcam captures video for tracking & feeds it to
+a raspberry pi.  The raspberry pi runs the tracking firmware & sends
+commands over SPI to the truck's camera board.  SPI goes from SPI0_MOSI
+to SWDIO on the cam board, SPI0_CLK goes to SWCLK on the cam board.
+
+
+
+coco_to_tflow.py: extract training data from the COCO dataset for tensorflow
+
+coco_to_pytorch.py: extract training data from the COCO dataset for pytorch/YOLO
+
+model_maker.py: train an efficientdet_lite object dector for tensorflow
+
+efficientlion0.tflite.1000.300epoch: best tensorflow model so far, for
+    tracking humans.  Runs in 
+    https://github.com/tensorflow/examples/tree/master/lite/examples/object_detection/raspberry_pi/detect.py
 
 
 enclosure.FCStd: enclosure for a raspberri PI 4B & servo driver
@@ -34,6 +53,7 @@ generalplus.FCStd: adapt a keychain cam to a CF rod
 
 cam_server.c:
 truckcam.c: face tracker firmware for a raspberry PI 4B
+    Uses the opencv DNN backend
 
 truckcam.FCMacro
 libisogrid.py: isogrid script for the enclosure
