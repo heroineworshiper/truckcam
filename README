@@ -38,9 +38,6 @@ label.py: Use YOLO to automatically label images & generate training sets for te
 
 model_maker.py: train an efficientdet_lite object detector for tensorflow
 
-efficientlion0.tflite.1000.300epoch: best tensorflow model so far, for
-    tracking humans.  Runs in 
-    https://github.com/tensorflow/examples/tree/master/lite/examples/object_detection/raspberry_pi/detect.py
 
 --------------------------------------------------------------------------------
 
