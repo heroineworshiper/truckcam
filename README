@@ -63,7 +63,11 @@ face_detect2.py: face tracking test program which came from opencv-4.x/samples/d
 face_recognizer_fast.onnx: model for face recognition using opencv DNN
 yunet.onnx: model for face detection using opencv DNN
 
-efficientlion0.yolo.100.tflite: model for whole body tracking
+efficientlion0.tflite.1000.300epoch: model for whole body tracking
+    Trained using the COCO 2017 dataset.
+
+efficientlion0.yolo.100.tflite: best model for whole body tracking
+    Trained using footage from the truck mounted webcam.
 
 ffmpeg-kit: library used by Android
 
