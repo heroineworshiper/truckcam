@@ -43,6 +43,24 @@ model_maker.py: train an efficientdet_lite object detector for tensorflow
 
 Hardware:
 
+
+cam_bearing.FCStd
+    bearing for motorized panning
+    print bearing inner
+    print bearing outer
+     - doesn't require support
+    must print with
+        4 * "inner shroud slice"
+         - TODO: make hole for tube & make base wider to compensate for lost material
+         - TODO remove alignment ring to make it easier to print
+        "outer shroud" + "bolt loop"
+    
+    print right angle coupling with right hole pattern to create a right angle
+    requires ironing
+
+cam_motor.FCStd:
+    brushless servo as a stepper motor for panning
+
 enclosure.FCStd: enclosure for a raspberri PI 4B & servo driver
 
 generalplus.FCStd: adapt a keychain cam to a CF rod
