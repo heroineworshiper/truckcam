@@ -65,9 +65,12 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
     ClientThread client;
 
 
-    // size of the encoded video
-    static final int W = 640;
+    // size of the cropped preview video
+    static final int W = 360;
     static final int H = 360;
+    // size of total video frame
+    static final int TOTAL_W = 640;
+    static int preview_x = 0;
     static boolean USE_FFMPEG = false;
     static OutputStream ffmpeg_stdin;
     static InputStream ffmpeg_stdout;
@@ -103,9 +106,9 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
     Vector<Button> buttons = new Vector();
     Vector<Text> texts = new Vector();
     Button activateButton;
-    Button leftButton;
-    Button centerButton;
-    Button rightButton;
+//    Button leftButton;
+//    Button centerButton;
+//    Button rightButton;
     Text videoDeviceError;
     Text videoBufferError;
     Text servoError;
@@ -270,7 +273,7 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         });
     }
 
-    public void drawVideo(Bitmap bitmap)
+    public void drawVideo(Bitmap bitmap, int preview_x)
     {
         getActivity().runOnUiThread(new Runnable() {
             @Override
@@ -280,7 +283,7 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
                 if(canvas != null) {
                     // must convert to a software bitmap for draw()
                     videoBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false);
-                    drawGUI(canvas);
+                    drawGUI(canvas, preview_x);
                     video.getHolder().unlockCanvasAndPost(canvas);
                 }
             }
@@ -307,7 +310,7 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
                     }
                     videoBitmap.copyPixelsFromBuffer(frameBuffer[current]);
                     frameBuffer[current].rewind();
-                    drawGUI(canvas);
+                    drawGUI(canvas, preview_x);
 
                     video.getHolder().unlockCanvasAndPost(canvas);
                 }
@@ -329,25 +332,25 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
             @Override
             public void run() {
                 boolean needRedraw = false;
-                if(leftButton != null)
-                {
-                    needRedraw |= leftButton.updateText(getLeftText());
-                }
-                if(centerButton != null)
-                {
-                    needRedraw |= centerButton.updateText(getCenterText());
-                }
-                if(rightButton != null)
-                {
-                    needRedraw |= rightButton.updateText(getRightText());
-                }
+//                if(leftButton != null)
+//                {
+//                    needRedraw |= leftButton.updateText(getLeftText());
+//                }
+//                if(centerButton != null)
+//                {
+//                    needRedraw |= centerButton.updateText(getCenterText());
+//                }
+//                if(rightButton != null)
+//                {
+//                    needRedraw |= rightButton.updateText(getRightText());
+//                }
 
                 needRedraw |= updateErrors();
 
                 if(needRedraw) {
                     Canvas canvas = video.getHolder().lockCanvas();
                     if (canvas != null) {
-                        drawGUI(canvas);
+                        drawGUI(canvas, preview_x);
                         video.getHolder().unlockCanvasAndPost(canvas);
                     }
                 }
@@ -361,9 +364,9 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         texts.clear();
 
         activateButton = null;
-        leftButton = null;
-        centerButton = null;
-        rightButton = null;
+//        leftButton = null;
+//        centerButton = null;
+//        rightButton = null;
 
 
 
@@ -447,50 +450,51 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
                     };
                     buttons.add(activateButton);
 
-                    text = "FACE POSITION:";
-                    size = Text.calculateSize(text);
-                    x -= activateButton.getW() + MARGIN;
                     y = MARGIN;
-                    Text t = new Text(x, y, text);
-                    texts.add(t);
+//                    text = "FACE POSITION:";
+//                    size = Text.calculateSize(text);
+//                    x -= activateButton.getW() + MARGIN;
+//                    Text t = new Text(x, y, text);
+//                    texts.add(t);
+//
+//                    text = getLeftText();
+//                    size = Button.calculateSize("O", null);
+//                    x -= t.getW() + MARGIN + size.width() / 2;
+//                    y = MARGIN + size.height() / 2;
+//                    leftButton = new Button(x, y, text);
+//                    leftButton.listener = new Button.ButtonListener() {
+//                        @Override
+//                        public void onClick() {
+//                            Log.i("FirstFragment", "LEFT");
+//                            client.sendCommand('l');
+//                        }
+//                    };
+//                    buttons.add(leftButton);
+//
+//                    y += MARGIN + size.height() * 2;
+//                    centerButton = new Button(x, y, getCenterText());
+//                    centerButton.listener = new Button.ButtonListener() {
+//                        @Override
+//                        public void onClick() {
+//                            Log.i("FirstFragment", "CENTER");
+//                            client.sendCommand('c');
+//                        }
+//                    };
+//
+//                    buttons.add(centerButton);
+//                    y += MARGIN + size.height() * 2;
+//                    rightButton = new Button(x, y, getRightText());
+//                    rightButton.listener = new Button.ButtonListener() {
+//                        @Override
+//                        public void onClick() {
+//                            Log.i("FirstFragment", "RIGHT");
+//                            client.sendCommand('r');
+//                        }
+//                    };
+//                    buttons.add(rightButton);
 
-                    text = getLeftText();
-                    size = Button.calculateSize("O", null);
-                    x -= t.getW() + MARGIN + size.width() / 2;
-                    y = MARGIN + size.height() / 2;
-                    leftButton = new Button(x, y, text);
-                    leftButton.listener = new Button.ButtonListener() {
-                        @Override
-                        public void onClick() {
-                            Log.i("FirstFragment", "LEFT");
-                            client.sendCommand('l');
-                        }
-                    };
-                    buttons.add(leftButton);
-
-                    y += MARGIN + size.height() * 2;
-                    centerButton = new Button(x, y, getCenterText());
-                    centerButton.listener = new Button.ButtonListener() {
-                        @Override
-                        public void onClick() {
-                            Log.i("FirstFragment", "CENTER");
-                            client.sendCommand('c');
-                        }
-                    };
-
-                    buttons.add(centerButton);
-                    y += MARGIN + size.height() * 2;
-                    rightButton = new Button(x, y, getRightText());
-                    rightButton.listener = new Button.ButtonListener() {
-                        @Override
-                        public void onClick() {
-                            Log.i("FirstFragment", "RIGHT");
-                            client.sendCommand('r');
-                        }
-                    };
-                    buttons.add(rightButton);
-
-                    x -= MARGIN + size.width() * 2;
+//                    x -= MARGIN + size.width() * 2;
+                    x = MARGIN + size.width() * 2;
                     text = "UPDATE SETTINGS";
                     size = Button.calculateSize(text, null);
                     Button b = new Button(x, MARGIN + size.height() / 2, text);
@@ -507,7 +511,7 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
                 }
             }
 
-            drawGUI(canvas);
+            drawGUI(canvas, preview_x);
             video.getHolder().unlockCanvasAndPost(canvas);
 
         }
@@ -545,10 +549,15 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         );
     }
 
-    public void drawGUI(Canvas canvas) {
+    public void drawGUI(Canvas canvas, int preview_x) {
         Paint p = new Paint();
         p.setStyle(Paint.Style.FILL);
 
+
+        // DEBUG
+   //     preview_x = 248;
+
+        this.preview_x = preview_x;
         // erase background
         p.setColor(Color.DKGRAY);
         canvas.drawRect(new Rect(0, 0, canvas.getWidth(), canvas.getHeight()), p);
@@ -560,15 +569,15 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         matrix.reset();
         matrix.postTranslate(-W / 2, -H / 2); // Centers source image
 
-        float scale1;
-        float scale2;
         float dstH;
         float dstW;
         float scale;
         dstW = canvas.getWidth();
         scale = dstW / H;
+        float offset = (canvas.getHeight() - TOTAL_W * scale);
         dstH = W * scale;
-        dstY = canvas.getHeight() - dstH / 2;
+//        dstY = canvas.getHeight() - dstH / 2 - 64;
+        dstY = preview_x * scale + dstH / 2 + offset / 2;
         matrix.postScale(scale, scale);
         matrix.postRotate(90);
         matrix.postTranslate(dstX, dstY);
@@ -615,7 +624,7 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         if(needRedraw)
         {
             Canvas canvas = video.getHolder().lockCanvas();
-            drawGUI(canvas);
+            drawGUI(canvas, preview_x);
             video.getHolder().unlockCanvasAndPost(canvas);
         }
 

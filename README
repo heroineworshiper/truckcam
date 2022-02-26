@@ -34,6 +34,8 @@ coco_to_tflow.py: extract training data from the COCO dataset for tensorflow
 
 coco_to_pytorch.py: extract training data from the COCO dataset for pytorch/YOLO
 
+label.py: Use YOLO to automatically label images & generate training sets for tensorflow.
+
 model_maker.py: train an efficientdet_lite object detector for tensorflow
 
 efficientlion0.tflite.1000.300epoch: best tensorflow model so far, for
@@ -54,12 +56,14 @@ libisogrid.py: isogrid script for the enclosure
 
 --------------------------------------------------------------------------------
 
-Face tracking:
+Lion tracking:
 
 face_detect2.py: face tracking test program which came from opencv-4.x/samples/dnn/face_detect.py
 
 face_recognizer_fast.onnx: model for face recognition using opencv DNN
 yunet.onnx: model for face detection using opencv DNN
+
+efficientlion0.yolo.100.tflite: model for whole body tracking
 
 ffmpeg-kit: library used by Android
 
@@ -67,7 +71,10 @@ cam_server.c:
 truckcam.c: face tracker firmware for a raspberry PI 4B
     Uses the opencv DNN backend
 
-TruckCam: Android user interface for face tracker firmware
+truckflow.c: whole body tracker for raspberry pi 4B
+    Uses the tensorflow backend
+
+TruckCam: Android user interface for tracker firmware
     - be sure to copy settings.txt to /sdcard/truckcam/ & enable storage permissions
     - different versions of Android require disabling data to 
         access wifi without internet

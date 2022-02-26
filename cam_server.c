@@ -102,7 +102,8 @@ void send_status(webserver_connection_t *connection)
 {
     uint8_t buffer[3];
     buffer[0] = current_operation;
-    buffer[1] = face_position;
+//    buffer[1] = face_position;
+    buffer[1] = 1;
     buffer[2] = error_flags;
 
     prev_error_flags = error_flags;
@@ -381,21 +382,21 @@ void* web_server_reader(void *ptr)
                             current_operation = IDLE;
                             send_status(connection);
                             break;
-                        case 'l':
-                            face_position = FACE_LEFT;
-                            ::save_defaults();
-                            send_status(connection);
-                            break;
-                        case 'c':
-                            face_position = FACE_CENTER;
-                            ::save_defaults();
-                            send_status(connection);
-                            break;
-                        case 'r':
-                            face_position = FACE_RIGHT;
-                            ::save_defaults();
-                            send_status(connection);
-                            break;
+//                         case 'l':
+//                             face_position = FACE_LEFT;
+//                             ::save_defaults();
+//                             send_status(connection);
+//                             break;
+//                         case 'c':
+//                             face_position = FACE_CENTER;
+//                             ::save_defaults();
+//                             send_status(connection);
+//                             break;
+//                         case 'r':
+//                             face_position = FACE_RIGHT;
+//                             ::save_defaults();
+//                             send_status(connection);
+//                             break;
                         case 's':
                             parsing_state = PARSE_SETTINGS;
                             counter = 0;
@@ -418,20 +419,20 @@ void* web_server_reader(void *ptr)
                             speed = packet[1];
                         }
 
-                        if(packet[2] != 0xff)
-                        {
-                            xy_radius = packet[2];
-                        }
-
-                        if(packet[3] != 0xff)
-                        {
-                            size_radius = packet[3];
-                        }
-
-                        if(packet[4] != 0xff)
-                        {
-                            color_radius = packet[4];
-                        }
+//                         if(packet[2] != 0xff)
+//                         {
+//                             xy_radius = packet[2];
+//                         }
+// 
+//                         if(packet[3] != 0xff)
+//                         {
+//                             size_radius = packet[3];
+//                         }
+// 
+//                         if(packet[4] != 0xff)
+//                         {
+//                             color_radius = packet[4];
+//                         }
 
                         ::save_defaults();
                         send_status(connection);

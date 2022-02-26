@@ -1,5 +1,6 @@
 /*
- * face tracking camera
+ * Tracking camera using opencv DNN
+ *
  * Copyright (C) 2022 Adam Williams <broadcast at earthling dot net>
  * 
  * This program is free software; you can redistribute it and/or modify

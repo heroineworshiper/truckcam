@@ -31,6 +31,7 @@ class ClientThread implements Runnable {
 
     static final String SERVER = "10.0.3.1";
     //static final String SERVER = "10.0.0.17";
+    //static final String SERVER = "10.0.0.16";
     static final int PORT0 = 1234;
     static final int PORT1 = 1238;
 
@@ -334,14 +335,22 @@ class ClientThread implements Runnable {
                                             else
                                             {
                                                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                                                    byte[] packet2 = new byte[dataSize - 4];
+                                                    int packet2_size = dataSize - 4;
+                                                    for(int j = 0; j < packet2_size; j++)
+                                                    {
+                                                        packet2[j] = packet[j + 4];
+                                                    }
+
+                                                    int preview_x = read_int32(packet, 0);
                                                     ImageDecoder.Source imageSource =
-                                                        ImageDecoder.createSource(ByteBuffer.wrap(packet, 0, dataSize));
+                                                        ImageDecoder.createSource(ByteBuffer.wrap(packet2, 0, packet2_size));
                                                     // generates a hardware bitmap
                                                     Bitmap bitmap = ImageDecoder.decodeBitmap(imageSource);
 //                                                    Log.i("x", "VIJEO w=" + bitmap.getWidth() +
 //                                                            " h=" + bitmap.getHeight() +
 //                                                            " " + bitmap.getColorSpace());
-                                                    fragment.drawVideo(bitmap);
+                                                    fragment.drawVideo(bitmap, preview_x);
                                                 }
                                             }
                                         }

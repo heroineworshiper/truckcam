@@ -1,22 +1,34 @@
-# This generates a tensorflow object detector for 1 object type, from a bunch of images
+# This generates a tensorflow object detector for 1 object type, 
+# from a bunch of images
 
-# The arguments are hard coded.  Run it as
+# The arguments are hard coded.  
+
+# Enter the virtual python environment
+# source /root/yolov5/YoloV5_VirEnv/bin/activate
+
+
+# Run it as
 # time LD_LIBRARY_PATH=/usr/local/cuda-11.2/targets/x86_64-linux/lib/ python3 model_maker.py
 
 import numpy as np
 import os
 
-TRAIN_DATA = '../train_person_5000'
-VAL_DATA = '../val_person_100'
-MODEL = 'efficientdet_lite0'
-OUTPUT = 'efficientlion0.tflite.5000'
-CATEGORY = 'Lion'
+
+#TRAIN_DATA = '../train_person_1000'
+#VAL_DATA = '../val_person_200'
+#OUTPUT = 'efficientlion0.tflite.1000.300epoch'
+#EPOCHS = 300
+#MODEL = 'efficientdet_lite0'
+
+TRAIN_DATA = '../train_lion'
+VAL_DATA = '../val_lion'
+OUTPUT = 'efficientlion0.yolo.100.tflite'
 EPOCHS = 100
+MODEL = 'efficientdet_lite0'
+
+CATEGORY = 'Lion'
 BATCH_SIZE = 4
 
-#MODEL = 'efficientdet_lite0'
-#OUTPUT = 'efficientlion0.tflite.1000'
-#BATCH_SIZE = 2
 
 
 from tflite_model_maker.config import ExportFormat, QuantizationConfig
@@ -33,7 +45,7 @@ from absl import logging
 logging.set_verbosity(logging.ERROR)
 
  
-
+# dynamically allocate GPU memory instead of reserving all of it
 #gpus = tf.config.experimental.list_physical_devices('GPU')
 #if gpus:
 #    try:
