@@ -446,6 +446,7 @@ void* web_server_reader(void *ptr)
 		printf("web_server_reader %d: client closed\n", __LINE__);
         pthread_mutex_lock(&www_mutex);
 		connection->is_reading = 0;
+// notify the writer
         sem_post(&fifo_ready);
         pthread_mutex_unlock(&www_mutex);
     }

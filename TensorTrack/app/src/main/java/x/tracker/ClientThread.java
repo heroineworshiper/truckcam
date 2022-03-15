@@ -1,31 +1,42 @@
 package x.tracker;
 
+import android.graphics.Bitmap;
+import android.graphics.ImageDecoder;
+import android.graphics.drawable.Drawable;
 import android.util.Log;
 
 import com.arthenica.ffmpegkit.ExecuteCallback;
 import com.arthenica.ffmpegkit.FFmpegKit;
 import com.arthenica.ffmpegkit.Session;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.Socket;
+import java.nio.ByteBuffer;
 import java.util.Formatter;
+import java.util.StringTokenizer;
+import java.util.Vector;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 class ClientThread implements Runnable {
     private FirstFragment fragment;
 
-    static final String SERVER = "10.0.0.20";
+//    static final String SERVER = "10.0.0.20";
+    static final String SERVER = "10.0.0.16";
     static final int PORT0 = 1234;
     static final int PORT1 = 1238;
 
     static Socket socket;
     byte[] header = new byte[8];
-    byte[] packet = new byte[65536];
+    byte[] packet = new byte[1024 * 1024];
 
     final int GET_START_CODE0 = 0;
     final int GET_START_CODE1 = 1;
@@ -144,26 +155,6 @@ class ClientThread implements Runnable {
 
                 fragment.drawStatus("Reading stream");
 
-                //String command = "-probesize 32 -vcodec h263 -y -i " + stdinPath + " -vcodec rawvideo -f rawvideo -flush_packets 1 -pix_fmt rgb24 " + stdoutPath;
-                //String command = "-probesize 32 -vcodec hvec -y -i " + stdinPath + " -vcodec rawvideo -f rawvideo -flush_packets 1 -pix_fmt rgb24 " + stdoutPath;
-                String command = "-probesize 32 -vcodec mjpeg -y -i " + fragment.stdinPath + " -vcodec rawvideo -f rawvideo -flush_packets 1 -pix_fmt rgb24 " + fragment.stdoutPath;
-                Log.i("ClientThread", "Running " + command);
-
-
-                FFmpegKit.executeAsync(command,
-                        new ExecuteCallback() {
-                            @Override
-                            public void apply(Session session) {
-                            }
-                        });
-
-
-                try {
-                    fragment.ffmpeg_stdin = new FileOutputStream(fragment.stdinPath);
-
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
 
                 // read stream from server
                 byte[] buffer = new byte[1024];
@@ -223,6 +214,10 @@ class ClientThread implements Runnable {
                                     }
                                     break;
                                 case GET_DATA:
+                                    if(counter >= packet.length)
+                                    {
+                                        counter--;
+                                    }
                                     packet[counter++] = (byte)c;
                                     if(counter >= dataSize)
                                     {
@@ -232,7 +227,26 @@ class ClientThread implements Runnable {
                                         if(type == VIJEO)
                                         {
                                             total += dataSize;
-                                            fragment.ffmpeg_stdin.write(packet, 0, dataSize);
+                                            Log.i("ClientThread", "VIJEO dataSize=" + dataSize);
+
+                                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                                                byte[] packet2 = new byte[dataSize - 4];
+                                                int packet2_size = dataSize - 4;
+                                                for(int j = 0; j < packet2_size; j++)
+                                                {
+                                                    packet2[j] = packet[j + 4];
+                                                }
+
+                                                int preview_x = read_int32(packet, 0);
+                                                ImageDecoder.Source imageSource =
+                                                    ImageDecoder.createSource(ByteBuffer.wrap(packet2, 0, packet2_size));
+                                                // generates a hardware bitmap
+                                                Bitmap bitmap = ImageDecoder.decodeBitmap(imageSource);
+                                                Log.i("x", "preview_x=" + preview_x + " w=" + bitmap.getWidth() +
+                                                        " h=" + bitmap.getHeight() +
+                                                        " " + bitmap.getColorSpace());
+                                                fragment.drawVideo(bitmap, preview_x);
+                                            }
                                         }
                                         else if(type == STATUS)
                                         {

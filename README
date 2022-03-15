@@ -78,22 +78,33 @@ face_detect2.py: face tracking test program which came from opencv-4.x/samples/d
 face_recognizer_fast.onnx: model for face recognition using opencv DNN
 yunet.onnx: model for face detection using opencv DNN
 
-efficientlion0.tflite.1000.300epoch: general model for whole body tracking
-    Trained using the COCO 2017 dataset.
+efficientlion0.tflite.1000.300epoch: general model for tracking a whole body
+    Trained using the prelabeled COCO 2017 dataset.
 
 efficientlion0.yolo.300.tflite: model for tracking running athletes
     Trained using footage from the truck mounted webcam.
+    Labeled using YOLO.
 
 ffmpeg-kit: library used by Android
 
+tensortrack.c:
+trackerserver.c: track 1-2 people with a raspberry PI 4B
+    Tracks pan & tilt.
+    Uses whole body tracking with tensorflow
+
+TensorTrack: Android user interface for tensortrack
+
 cam_server.c:
-truckcam.c: face tracker firmware for a raspberry PI 4B
+truckcam.c: Track faces with a raspberry PI 4B
+    Least effective method of tracking.
     Uses the opencv DNN backend
 
-truckflow.c: whole body tracker for raspberry pi 4B
-    Uses the tensorflow backend
+truckflow.c: Track a running human with a raspberry pi 4B
+    Pan direction only.
+    Uses whole body tracking with tensorflow
 
-TruckCam: Android user interface for tracker firmware
+
+TruckCam: Android user interface for truckflow
     - be sure to copy settings.txt to /sdcard/truckcam/ & enable storage permissions
     - different versions of Android require disabling data to 
         access wifi without internet

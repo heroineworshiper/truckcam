@@ -68,10 +68,6 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
     // size of the cropped preview video
     static final int W = 360;
     static final int H = 360;
-    // size of total video frame
-    static final int TOTAL_W = 640;
-    static int preview_x = 0;
-    static boolean USE_FFMPEG = false;
     static OutputStream ffmpeg_stdin;
     static InputStream ffmpeg_stdout;
     static String stdinPath;

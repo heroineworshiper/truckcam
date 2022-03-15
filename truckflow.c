@@ -69,7 +69,8 @@ using namespace std;
 #include <linux/spi/spidev.h>
 #endif
 
-#define MODEL "efficientlion0.yolo.100.tflite"
+#define MODEL "efficientlion0.yolo.300.tflite"
+//#define MODEL "efficientlion0.yolo.100.tflite"
 //#define MODEL "efficientlion1.yolo.tflite"
 //#define MODEL "efficientlion0.tflite.1000.300epoch"
 #define MAX_HITS 4

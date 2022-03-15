@@ -22,8 +22,8 @@ import os
 
 TRAIN_DATA = '../train_lion'
 VAL_DATA = '../val_lion'
-OUTPUT = 'efficientlion0.yolo.100.tflite'
-EPOCHS = 100
+OUTPUT = 'efficientlion0.yolo.300.tflite'
+EPOCHS = 300
 MODEL = 'efficientdet_lite0'
 
 CATEGORY = 'Lion'

@@ -25,17 +25,16 @@ CFLAGS := \
 TRUCKFLOW_LIBS := $(LIBS) -L. -ltensorflowlite -luuid
 
 TRUCKFLOW_CFLAGS := \
-        -g \
 	$(CFLAGS) \
 	-I../tensorflow-2.8.0/ \
         -I$(BAZEL_PATH)flatbuffers/include
-        
+
 
 CC := g++
 
 OBJS := \
 	cam_server.o
-        
+
 
 TRUCKCAM_OBJS := \
 	truckcam.o
@@ -43,11 +42,18 @@ TRUCKCAM_OBJS := \
 TRUCKFLOW_OBJS := \
 	truckflow.o
 
+TENSORTRACK_OBJS := \
+	tensortrack.o \
+	trackerserver.o
+
 truckcam: $(OBJS) $(TRUCKCAM_OBJS)
 	$(CC) -O2 -o truckcam $(OBJS) $(TRUCKCAM_OBJS) $(LIBS)
 
 truckflow: $(OBJS) $(TRUCKFLOW_OBJS)
 	$(CC) -O2 -o truckflow $(OBJS) $(TRUCKFLOW_OBJS) $(TRUCKFLOW_LIBS)
+
+tensortrack: $(TENSORTRACK_OBJS)
+	$(CC) -O2 -o tensortrack $(TENSORTRACK_OBJS) $(TRUCKFLOW_LIBS)
 
 $(OBJS) $(TRUCKCAM_OBJS):
 	$(CC) $(CFLAGS) -c $< -o $*.o
@@ -55,9 +61,14 @@ $(OBJS) $(TRUCKCAM_OBJS):
 $(TRUCKFLOW_OBJS):
 	$(CC) $(TRUCKFLOW_CFLAGS) -c $< -o $*.o
 
+$(TENSORTRACK_OBJS):
+	$(CC) $(TRUCKFLOW_CFLAGS) -c $< -o $*.o
+
 clean:
 	rm -f truckcam truckflow *.o
 
+tensortrack.o: tensortrack.c
+trackerserver.o: trackerserver.c
 truckflow.o: truckflow.c
 truckcam.o: truckcam.c
 cam_server.o: cam_server.c

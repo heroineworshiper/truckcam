@@ -29,9 +29,9 @@ import java.util.concurrent.Executors;
 class ClientThread implements Runnable {
     private FirstFragment fragment;
 
-    static final String SERVER = "10.0.3.1";
+    //static final String SERVER = "10.0.3.1";
     //static final String SERVER = "10.0.0.17";
-    //static final String SERVER = "10.0.0.16";
+    static final String SERVER = "10.0.0.16";
     static final int PORT0 = 1234;
     static final int PORT1 = 1238;
 
