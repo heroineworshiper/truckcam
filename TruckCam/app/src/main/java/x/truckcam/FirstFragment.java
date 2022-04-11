@@ -59,14 +59,15 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
 
     private FragmentFirstBinding binding;
     SurfaceView video;
-    ByteBuffer[] frameBuffer = new ByteBuffer[2];
-    int currentFrameBuffer = 0;
+//    ByteBuffer[] frameBuffer = new ByteBuffer[2];
+//    int currentFrameBuffer = 0;
     Bitmap videoBitmap;
+    Canvas videoCanvas;
     ClientThread client;
 
 
     // size of the cropped preview video
-    static final int W = 360;
+    static final int W = 640;
     static final int H = 360;
     static OutputStream ffmpeg_stdin;
     static InputStream ffmpeg_stdout;
@@ -155,18 +156,20 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
 
 
         videoBitmap = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
+        videoCanvas = new Canvas();
+        videoCanvas.setBitmap(videoBitmap);
 
-        for(int i = 0; i < 2; i++) {
-            frameBuffer[i] = ByteBuffer.allocateDirect(videoBitmap.getByteCount());
-        }
+//        for(int i = 0; i < 2; i++) {
+//            frameBuffer[i] = ByteBuffer.allocateDirect(videoBitmap.getByteCount());
+//        }
 
         stdinPath = FFmpegKitConfig.registerNewFFmpegPipe(getContext());
         stdoutPath = FFmpegKitConfig.registerNewFFmpegPipe(getContext());
         Log.i("FirstFragment", "onViewCreated " + stdinPath + " " + stdoutPath);
 
-        if(USE_FFMPEG) {
-            new Thread(new DecodeThread(this)).start();
-        }
+//        if(USE_FFMPEG) {
+//            new Thread(new DecodeThread(this)).start();
+//        }
         new Thread(client = new ClientThread(this)).start();
 
     }
@@ -277,42 +280,47 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
                 Canvas canvas = video.getHolder().lockCanvas();
 
                 if(canvas != null) {
+                    // overlay cropped section
+                    Paint p = new Paint();
                     // must convert to a software bitmap for draw()
-                    videoBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false);
-                    drawGUI(canvas, preview_x);
+                    Bitmap softBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false);
+// ignore preview_x to display the entire viewfinder
+                    //videoCanvas.drawBitmap(softBitmap, preview_x, 0, p);
+                    videoCanvas.drawBitmap(softBitmap, 0, 0, p);
+                    drawGUI(canvas);
                     video.getHolder().unlockCanvasAndPost(canvas);
                 }
             }
         });
     }
 
-    public void drawVideo() {
-        getActivity().runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                Canvas canvas = video.getHolder().lockCanvas();
-
-                if(canvas != null) {
-//                    Paint p = new Paint();
-//                    p.setColor(Color.BLACK);
-//                    p.setStyle(Paint.Style.FILL);
+//    public void drawVideo() {
+//        getActivity().runOnUiThread(new Runnable() {
+//            @Override
+//            public void run() {
+//                Canvas canvas = video.getHolder().lockCanvas();
 //
-//                    canvas.drawRect(new Rect(0, 0, canvas.getWidth(), canvas.getHeight()), p);
-
-                    int current = currentFrameBuffer - 1;
-                    if (current < 0)
-                    {
-                        current = 1;
-                    }
-                    videoBitmap.copyPixelsFromBuffer(frameBuffer[current]);
-                    frameBuffer[current].rewind();
-                    drawGUI(canvas, preview_x);
-
-                    video.getHolder().unlockCanvasAndPost(canvas);
-                }
-            }
-        });
-    }
+//                if(canvas != null) {
+////                    Paint p = new Paint();
+////                    p.setColor(Color.BLACK);
+////                    p.setStyle(Paint.Style.FILL);
+////
+////                    canvas.drawRect(new Rect(0, 0, canvas.getWidth(), canvas.getHeight()), p);
+//
+//                    int current = currentFrameBuffer - 1;
+//                    if (current < 0)
+//                    {
+//                        current = 1;
+//                    }
+//                    videoBitmap.copyPixelsFromBuffer(frameBuffer[current]);
+//                    frameBuffer[current].rewind();
+//                    drawGUI(canvas);
+//
+//                    video.getHolder().unlockCanvasAndPost(canvas);
+//                }
+//            }
+//        });
+//    }
 
     boolean updateErrors()
     {
@@ -346,7 +354,7 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
                 if(needRedraw) {
                     Canvas canvas = video.getHolder().lockCanvas();
                     if (canvas != null) {
-                        drawGUI(canvas, preview_x);
+                        drawGUI(canvas);
                         video.getHolder().unlockCanvasAndPost(canvas);
                     }
                 }
@@ -507,7 +515,7 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
                 }
             }
 
-            drawGUI(canvas, preview_x);
+            drawGUI(canvas);
             video.getHolder().unlockCanvasAndPost(canvas);
 
         }
@@ -545,7 +553,7 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         );
     }
 
-    public void drawGUI(Canvas canvas, int preview_x) {
+    public void drawGUI(Canvas canvas) {
         Paint p = new Paint();
         p.setStyle(Paint.Style.FILL);
 
@@ -553,7 +561,6 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         // DEBUG
    //     preview_x = 248;
 
-        this.preview_x = preview_x;
         // erase background
         p.setColor(Color.DKGRAY);
         canvas.drawRect(new Rect(0, 0, canvas.getWidth(), canvas.getHeight()), p);
@@ -570,10 +577,6 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         float scale;
         dstW = canvas.getWidth();
         scale = dstW / H;
-        float offset = (canvas.getHeight() - TOTAL_W * scale);
-        dstH = W * scale;
-//        dstY = canvas.getHeight() - dstH / 2 - 64;
-        dstY = preview_x * scale + dstH / 2 + offset / 2;
         matrix.postScale(scale, scale);
         matrix.postRotate(90);
         matrix.postTranslate(dstX, dstY);
@@ -605,7 +608,7 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
     @Override
     public boolean onTouch(View view, MotionEvent motionEvent) {
         int pointers = motionEvent.getPointerCount();
-        Log.i("FirstFragment", "motionEvent.getAction()=" + motionEvent.getAction());
+        //Log.i("FirstFragment", "motionEvent.getAction()=" + motionEvent.getAction());
 
         boolean needRedraw = false;
         for(int i = 0; i < buttons.size(); i++)
@@ -620,7 +623,7 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         if(needRedraw)
         {
             Canvas canvas = video.getHolder().lockCanvas();
-            drawGUI(canvas, preview_x);
+            drawGUI(canvas);
             video.getHolder().unlockCanvasAndPost(canvas);
         }
 

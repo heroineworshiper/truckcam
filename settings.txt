@@ -1,5 +1,10 @@
 # copy this to /sdcard/truckcam/
 
+# address on home network
+#ADDRESS 10.0.0.16
+# address in the field
+ADDRESS 10.0.3.1
+
 # all parameters are 0-100 percent of screen width
 # don't move if face is within this distance of the goal position
 DEADBAND 5
@@ -10,13 +15,13 @@ SPEED 100
 # face size is ignored if these parameters are met
 # set any parameter to 0 to always use face size
 # select face if within this radius of the previous position
-XY_RADIUS 10
+XY_RADIUS 100
 
 # select face if within this percentage of the previous size
-SIZE_RADIUS 50
+SIZE_RADIUS 100
 
 # select face if within this percentage of the previous color
-COLOR_RADIUS 10
+COLOR_RADIUS 100
 
 
 

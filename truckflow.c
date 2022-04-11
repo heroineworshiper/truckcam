@@ -21,7 +21,7 @@
 
 
 
-// based on opencv-4.x/samples/dnn/face_detect.cpp
+// track whole body using tensorflow
 // this runs on the odroid to capture vijeo & send servo commands
 // This requires ffmpeg out of an original hope H264 could be low latency
 // but only JPEG is low enough.
@@ -114,7 +114,7 @@ int prev_window_x = 0;
     #define CROP_W 720
     #define CROP_H 720
     // size of preview for phone
-    #define PREVIEW_W 360
+    #define PREVIEW_W 640
     #define PREVIEW_H 360
 
     #define SCANNING0 0
@@ -740,12 +740,16 @@ void visualize(Mat& input,
     int best_index)
 {
     int thickness = 2;
-    float text_size = 1.5;
+    float text_size = 1;
+    int text_h = 30;
     struct timespec settings_time2;
     clock_gettime(CLOCK_MONOTONIC, &settings_time2);
+    double scale = (double)PREVIEW_W / RAW_W;
     double delta = 
         (double)((settings_time2.tv_sec * 1000 + settings_time2.tv_nsec / 1000000) -
         (settings_time.tv_sec * 1000 + settings_time.tv_nsec / 1000000)) / 1000;
+    double x_offset = prev_window_x * scale;
+    double y_offset = 0;
 
     if(delta < 3)
     {
@@ -760,6 +764,8 @@ void visualize(Mat& input,
 
     for (int i = 0; i < lions.rows; i++)
     {
+        int x = (int)(lions.at<int>(i, 0) * scale + x_offset);
+        int y = (int)(lions.at<int>(i, 1) * scale + y_offset);
 // Draw bounding box
         auto color = Scalar(0, 255, 0);
         if(i == best_index)
@@ -767,20 +773,27 @@ void visualize(Mat& input,
             color = Scalar(0, 0, 255);
         }
         rectangle(input, 
-            Rect2i(lions.at<int>(i, 0), // x
-                lions.at<int>(i, 1),  // y
-                lions.at<int>(i, 2),  // w
-                lions.at<int>(i, 3)), // h
+            Rect2i(x, // x
+                y,  // y
+                lions.at<int>(i, 2) * scale,  // w
+                lions.at<int>(i, 3) * scale), // h
             color, thickness);
 
 // draw score
 #ifndef USE_SIZE  
-        std::string scoreString = cv::format("%.2f %s", 
-            scores[i],
-            best_index == i ? "REAL LION" : "FAKE LION");
+        std::string scoreString = cv::format("%.2f", 
+            scores[i]);
+//         std::string scoreString = cv::format("%.2f %s", 
+//             scores[i],
+//             best_index == i ? "REAL LION" : "FAKE LION");
+        int score_y = y - 2;
+        if(y < text_h)
+        {
+            score_y += text_h;
+        }
         putText(input, 
             scoreString, 
-            Point(lions.at<int>(i, 0), int(lions.at<int>(i, 1)) - 2), 
+            Point(x, score_y), 
             FONT_HERSHEY_SIMPLEX, 
             text_size, 
             Scalar(0, 255, 0), 
@@ -791,7 +804,7 @@ void visualize(Mat& input,
     std::string fpsString = cv::format("%.2f FPS", (float)fps);
     putText(input, 
         fpsString, 
-        Point(0, 40), 
+        Point(0, text_h), 
         FONT_HERSHEY_SIMPLEX, 
         text_size, 
         Scalar(0, 255, 0), 
@@ -1218,7 +1231,7 @@ input_h);
     int frame_size2;
     Mat rawData;
     Mat raw_image;
-    Mat preview_image;
+    Mat preview_image(PREVIEW_H, PREVIEW_W, CV_8UC3);
     Mat cropped_image;
     float fps = 0;
     int fps_frames = 0;
@@ -1532,12 +1545,13 @@ input_h);
 // send frame to phone
             if(server_output >= 0)
             {
+                resize(raw_image, 
+                    preview_image,
+                    cv::Size(PREVIEW_W, PREVIEW_H),
+                    cv::INTER_LINEAR); // no speed difference
+
 // draw the results
-#ifdef CROP
-                visualize(cropped, scores, boxes, fps, 0);
-#else
-                visualize(raw_image, scores, boxes, fps, 0);
-#endif
+                visualize(preview_image, scores, boxes, fps, 0);
 
 #ifdef USE_FFMPEG
 // send to ffmpeg
@@ -1550,17 +1564,6 @@ input_h);
                 std::vector<int> compressing_factor;
                 compressing_factor.push_back(IMWRITE_JPEG_QUALITY);
                 compressing_factor.push_back(50);
-#ifdef CROP
-                resize(cropped, 
-                    preview_image,
-                    Size(PREVIEW_W, PREVIEW_H),
-                    INTER_LINEAR); // no speed difference
-#else
-                resize(raw_image, 
-                    preview_image,
-                    Size(PREVIEW_W, PREVIEW_H),
-                    INTER_LINEAR); // no speed difference
-#endif
                 imencode(".jpg", 
                     preview_image, 
                     buf, 
@@ -1575,13 +1578,13 @@ input_h);
                 buf[1] = (preview_x >> 8) & 0xff;
                 buf[2] = (preview_x >> 16) & 0xff;
                 buf[3] = (preview_x >> 24) & 0xff;
+//                UPDATE_PROFILE
                 send_vijeo_fifo(&buf[0], buf.size());
 #endif // !USE_FFMPEG
+//                UPDATE_PROFILE
+//                printf("main %d delta=%f\n", __LINE__, delta);
             }
 
-// 10ms
-            UPDATE_PROFILE
-//            printf("main %d delta=%f\n", __LINE__, delta);
         }
     }
 
