@@ -82,6 +82,7 @@ tensortrack.c:
 trackerserver.c: track 1-2 people with a raspberry PI 4B
     Tracks pan & tilt.
     Uses whole body tracking with tensorflow
+    This didn't work.  Countreps/tracker continues to be the preferred method.
 
     A DSLR on a pan/tilt mount is driven by a servo board from
     countreps.  Video from HDMI goes to the tracker program.
@@ -97,10 +98,13 @@ truckflow.c: Track a running human with a raspberry pi 4B
     Pan direction only.
     Uses whole body tracking with tensorflow
 
+truckcam_trt.c: Track using face recognition & whole body.
+    Uses a jetson nano.
+    Pan direction only.
 
     A webcam is mounted on a lower part of the camera pole while the mane
     gopro goes on top.  The webcam captures video for tracking & feeds it to
-    a raspberry pi.  The raspberry pi runs the tracking firmware & sends
+    a confuser.  The confuser runs the tracking software & sends
     commands over SPI to the truck's camera board.  SPI goes from SPI0_MOSI
     to SWDIO on the cam board, SPI0_CLK goes to SWCLK on the cam board.
 
