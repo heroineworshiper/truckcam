@@ -27,12 +27,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.VideoView;
 
-import com.arthenica.ffmpegkit.ExecuteCallback;
-import com.arthenica.ffmpegkit.FFmpegKitConfig;
-import com.arthenica.ffmpegkit.FFmpegSession;
-import com.arthenica.ffmpegkit.Session;
-import com.arthenica.ffmpegkit.FFmpegKit;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -163,9 +157,6 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
 //            frameBuffer[i] = ByteBuffer.allocateDirect(videoBitmap.getByteCount());
 //        }
 
-        stdinPath = FFmpegKitConfig.registerNewFFmpegPipe(getContext());
-        stdoutPath = FFmpegKitConfig.registerNewFFmpegPipe(getContext());
-        Log.i("FirstFragment", "onViewCreated " + stdinPath + " " + stdoutPath);
 
 //        if(USE_FFMPEG) {
 //            new Thread(new DecodeThread(this)).start();

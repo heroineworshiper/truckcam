@@ -5,10 +5,6 @@ import android.graphics.ImageDecoder;
 import android.graphics.drawable.Drawable;
 import android.util.Log;
 
-import com.arthenica.ffmpegkit.ExecuteCallback;
-import com.arthenica.ffmpegkit.FFmpegKit;
-import com.arthenica.ffmpegkit.Session;
-
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -119,7 +115,7 @@ class ClientThread implements Runnable {
             }
         });
     }
-    
+
     public void readSettings()
     {
         File file = new File(SETTINGS);
