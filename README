@@ -36,7 +36,7 @@ Hardware:
 
 
 cam_bearing.FCStd
-    obsolete bearing for motorized panning
+    bearing for motorized panning
     print bearing inner
     print bearing outer
      - doesn't require support
@@ -69,6 +69,8 @@ face_detect2.py: face tracking test program which came from opencv-4.x/samples/d
 face_recognizer_fast.onnx: model for face recognition using opencv DNN
 yunet.onnx: model for face detection using opencv DNN
 
+enclosure2.FCStd: enclosure for jetson nano
+
 efficientlion0.tflite.1000.300epoch: general model for tracking a whole body
     Trained using the prelabeled COCO 2017 dataset.
 
@@ -77,6 +79,9 @@ efficientlion0.yolo.300.tflite: model for tracking running athletes
     Labeled using YOLO.
 
 ffmpeg-kit: obsolete library used by Android
+
+servo_board.FCStd: enclosure for the cam2.pcb board which is part of the
+    3D printed truck
 
 tensortrack.c:
 trackerserver.c: track 1-2 people with a raspberry PI 4B
