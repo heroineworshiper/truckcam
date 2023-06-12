@@ -101,6 +101,8 @@ truckflow.c: Track a running human with a raspberry pi 4B
 truckcam_trt.c: Track using face recognition & whole body.
     Uses a jetson nano.
     Pan direction only.
+    Requires https://github.com/heroineworshiper/face_recognition_tensorRT.git
+    1 directory higher
 
     A webcam is mounted on a lower part of the camera pole while the mane
     gopro goes on top.  The webcam captures video for tracking & feeds it to

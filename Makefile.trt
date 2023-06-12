@@ -1,0 +1,63 @@
+FACENET_DIR := ../face_recognition_tensorRT/
+FACENET_OBJS := ../face_recognition_tensorRT/build/CMakeFiles/face_recogition_tensorRT.dir/src/
+
+CC := g++
+
+
+OBJS := \
+    truckcam_trt.o \
+    truckserver.o \
+    ../countreps/trackerlib.o \
+    $(FACENET_OBJS)faceNet.cpp.o \
+    $(FACENET_OBJS)mtcnn.cpp.o \
+    $(FACENET_OBJS)pnet_rt.cpp.o \
+    $(FACENET_OBJS)rnet_rt.cpp.o \
+    $(FACENET_OBJS)onet_rt.cpp.o \
+    $(FACENET_OBJS)network.cpp.o \
+    $(FACENET_OBJS)baseEngine.cpp.o
+
+
+
+
+CFLAGS := \
+    -O2 \
+    -std=c++11 \
+    -I../countreps \
+    -I$(FACENET_DIR)src \
+    -I/usr/local/cuda-10.2/targets/aarch64-linux/include/ \
+    -I/usr/include/opencv4/
+
+
+
+LFLAGS := \
+	-lpthread \
+    -L/usr/local/cuda/lib64/ \
+    -lcudart \
+    -lnvinfer \
+    -lnvparsers \
+    -ljpeg \
+    `pkg-config opencv4 --libs`
+
+
+
+all: truckcam_trt
+
+truckcam_trt: $(OBJS)
+	$(CC) -o truckcam_trt $(OBJS) $(LFLAGS)
+
+clean:
+	rm -f *.o truckcam_trt
+
+$(OBJS):
+	$(CC) $(CFLAGS) -c $< -o $*.o
+
+truckcam_trt.o: truckcam_trt.c
+truckserver.o: truckserver.c
+../countreps/trackerlib.o: ../countreps/trackerlib.c
+
+
+
+
+
+
+
