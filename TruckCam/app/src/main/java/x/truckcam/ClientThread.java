@@ -3,6 +3,7 @@ package x.truckcam;
 import android.graphics.Bitmap;
 import android.graphics.ImageDecoder;
 import android.graphics.drawable.Drawable;
+import android.os.Build;
 import android.util.Log;
 
 import java.io.BufferedReader;
@@ -13,8 +14,11 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.Socket;
+import java.net.SocketException;
 import java.nio.ByteBuffer;
 import java.util.Formatter;
 import java.util.StringTokenizer;
@@ -22,17 +26,19 @@ import java.util.Vector;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import androidx.annotation.RequiresApi;
+
 class ClientThread implements Runnable {
     private FirstFragment fragment;
 
-    static String SERVER = "10.0.0.16";
-    static final int PORT0 = 1234;
-    static final int PORT1 = 1238;
+    static String SERVER = "10.0.2.1";
+    static final int SEND_PORT = 1234;
+    static final int RECV_PORT = 1235;
     static final String SETTINGS = "/sdcard/truckcam/settings.txt";
 
     static Socket socket;
     byte[] header = new byte[8];
-    byte[] packet = new byte[1024 * 1024];
+    byte[] packet = new byte[65536];
 
     final int GET_START_CODE0 = 0;
     final int GET_START_CODE1 = 1;
@@ -72,6 +78,12 @@ class ClientThread implements Runnable {
                 ((data[offset + 3]) << 24);
     }
 
+    static public int read_uint16(byte[] data, int offset)
+    {
+        return (data[offset] & 0xff) |
+                ((data[offset + 1] & 0xff) << 8);
+    }
+
 
     static public void printBuffer(String string, byte[] buffer, int offset, int bytes)
     {
@@ -85,8 +97,7 @@ class ClientThread implements Runnable {
     }
 
     private void handleStatus() {
-        if(fragment.currentOperation != fragment.prevOperation ||
-            fragment.prevLandscape != fragment.landscape)
+        if(fragment.currentOperation != fragment.prevOperation)
         {
             fragment.changeOperation();
         }
@@ -100,21 +111,27 @@ class ClientThread implements Runnable {
         pool.execute(new Runnable() {
             @Override
             public void run() {
-
                 synchronized (this) {
-                    if (socket != null) {
+                    try {
+                        DatagramSocket socket = new DatagramSocket();
+                        InetAddress address = InetAddress.getByName(SERVER);
                         byte[] buffer = new byte[1];
                         buffer[0] = (byte) id;
-                        try {
-                            socket.getOutputStream().write(buffer);
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                        }
+                        DatagramPacket packet = new DatagramPacket(
+                            buffer,
+                            buffer.length,
+                            address,
+                            SEND_PORT);
+                        socket.send(packet);
+                        socket.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
                     }
                 }
             }
         });
     }
+
 
     public void readSettings()
     {
@@ -197,21 +214,6 @@ class ClientThread implements Runnable {
                             {
                                 buffer[2] = (byte)Integer.parseInt(value);
                             }
-                            else
-                            if(key.equalsIgnoreCase("XY_RADIUS"))
-                            {
-                                buffer[3] = (byte)Integer.parseInt(value);
-                            }
-                            else
-                            if(key.equalsIgnoreCase("SIZE_RADIUS"))
-                            {
-                                buffer[4] = (byte)Integer.parseInt(value);
-                            }
-                            else
-                            if(key.equalsIgnoreCase("COLOR_RADIUS"))
-                            {
-                                buffer[5] = (byte)Integer.parseInt(value);
-                            }
                         }
                         reader.close();
                         socket.getOutputStream().write(buffer);
@@ -229,212 +231,193 @@ class ClientThread implements Runnable {
     }
 
 
+
+    @RequiresApi(api = Build.VERSION_CODES.P)
     @Override
     public void run() {
+        DatagramSocket socket = null;
+        try {
+            socket = new DatagramSocket(RECV_PORT);
+            socket.setSoTimeout(1000);
+        } catch (SocketException e) {
+            e.printStackTrace();
+        }
         fragment.waitForSurface();
 
-
         readSettings();
+// ping the server
+        Log.i("ClientThread", "server=" + SERVER + ":" + RECV_PORT);
+        boolean gotStatus = false;
+        sendCommand('*');
 
-        // connect to the server
-        int currentPort = PORT0;
         while (true) {
-            Log.i("ClientThread", "server=" + SERVER + ":" + currentPort);
-            fragment.drawStatus("Trying " + SERVER + ":" + currentPort);
+            // read stream from server
+            byte[] buffer = new byte[0x100000];
+            DatagramPacket packet_ = new DatagramPacket(buffer, buffer.length);
+            boolean timeout = false;
+            int bytes_read = 0;
             try {
-                InetAddress serverAddr = InetAddress.getByName(SERVER);
-                synchronized(this) {
-                    socket = new Socket(serverAddr, currentPort);
-                }
+                socket.receive(packet_);
             } catch (IOException e) {
-                e.printStackTrace();
+//                e.printStackTrace();
+                timeout = true;
             }
 
-            if (socket == null) {
-                Log.i("ClientThread", "Couldn't access server " + SERVER + ":" + currentPort);
-                currentPort++;
-                if (currentPort >= PORT1) {
-                    currentPort = PORT0;
-                }
+            if(timeout)
+            {
+                Log.i("ClientThread", "server timed out");
                 try {
-                    Thread.sleep(1000L);
-                } catch (InterruptedException e) {
+                    socket.close();
+                    socket = new DatagramSocket(RECV_PORT);
+                    socket.setSoTimeout(1000);
+                } catch (SocketException e) {
                     e.printStackTrace();
                 }
-            } else {
+                sendCommand('*');
+                bytes_read = 0;
+            }
+            else
+            {
+                bytes_read = packet_.getLength();
+            }
 
-
-                fragment.drawStatus("Reading stream");
-
-//                if(FirstFragment.USE_FFMPEG)
-//                {
-//                    //String command = "-probesize 32 -vcodec h263 -y -i " + stdinPath + " -vcodec rawvideo -f rawvideo -flush_packets 1 -pix_fmt rgb24 " + stdoutPath;
-//                    //String command = "-probesize 32 -vcodec hvec -y -i " + stdinPath + " -vcodec rawvideo -f rawvideo -flush_packets 1 -pix_fmt rgb24 " + stdoutPath;
-//                    String command = "-probesize 32 -vcodec mjpeg -y -i " + fragment.stdinPath + " -vcodec rawvideo -f rawvideo -flush_packets 1 -pix_fmt rgb24 " + fragment.stdoutPath;
-//                    Log.i("ClientThread", "Running " + command);
-//
-//
-//                    FFmpegKit.executeAsync(command,
-//                            new ExecuteCallback() {
-//                                @Override
-//                                public void apply(Session session) {
-//                                }
-//                            });
-//
-//
-//                    try {
-//                        fragment.ffmpeg_stdin = new FileOutputStream(fragment.stdinPath);
-//
-//                    } catch (IOException e) {
-//                        e.printStackTrace();
-//                    }
-//                }
-
-
-                // read stream from server
-                byte[] buffer = new byte[1024];
-                int total = 0;
-                while (true) {
-                    int bytes_read = 0;
-                    try {
-                        bytes_read = socket.getInputStream().read(buffer);
-
-                        //Log.i("ClientThread", "bytes_read=" + bytes_read);
-                        if (bytes_read < 0)
+            for(int i = 0; i < bytes_read; i++)
+            {
+                int c = (int)buffer[i];
+                switch(packetState)
+                {
+                    case GET_START_CODE0:
+                        if(c == (byte)START_CODE0)
                         {
-                            break;
+                            //Log.i("ClientThread", "START_CODE0");
+                            packetState = GET_START_CODE1;
                         }
+                        break;
+                    case GET_START_CODE1:
 
-
-
-                        for(int i = 0; i < bytes_read; i++)
+                        if(c == (byte)START_CODE1)
                         {
-                            int c = (int)buffer[i];
-                            switch(packetState)
+                            //Log.i("ClientThread", "GET_START_CODE1");
+
+                            packetState = GET_HEADER;
+                            counter = 2;
+                        }
+                        else
+                        if(c == (byte)START_CODE0)
+                        {
+                            packetState = GET_START_CODE1;
+                        }
+                        else
+                        {
+                            packetState = GET_START_CODE0;
+                        }
+                        break;
+                    case GET_HEADER:
+                        header[counter++] = (byte)c;
+                        if(counter >= 8)
+                        {
+                            //Log.i("ClientThread", "GET_HEADER ");
+                            dataSize = read_int32(header, 4);
+                            packetState = GET_DATA;
+                            counter = 0;
+                        }
+                        break;
+                    case GET_DATA:
+                        packet[counter++] = (byte)c;
+                        if(counter >= dataSize)
+                        {
+                            int type = (int)header[2];
+
+                            //Log.i("ClientThread", "GET_DATA type=" + type);
+                            if(type == VIJEO)
                             {
-                                case GET_START_CODE0:
-                                    if(c == (byte)START_CODE0)
-                                    {
-                                        //Log.i("ClientThread", "START_CODE0");
-                                        packetState = GET_START_CODE1;
-                                    }
-                                    break;
-                                case GET_START_CODE1:
+                                Log.i("ClientThread", "VIJEO size=" + dataSize);
 
-                                    if(c == (byte)START_CODE1)
-                                    {
-                                        //Log.i("ClientThread", "GET_START_CODE1");
 
-                                        packetState = GET_HEADER;
-                                        counter = 2;
-                                    }
-                                    else
-                                    if(c == (byte)START_CODE0)
+                                if(!fragment.busy)
+                                {
+                                    fragment.busy = true;
+// extract keypoints
+                                    int offset = 0;
+                                    
+                                    int fps_i = read_uint16(packet, offset);
+                                    offset += 2;
+                                    FirstFragment.fps = (float)fps_i / 256;
+                                    int total = read_uint16(packet, offset);
+                                    FirstFragment.animals = total;
+                                    if(FirstFragment.animals > FirstFragment.MAX_ANIMALS)
+                                        FirstFragment.animals = FirstFragment.MAX_ANIMALS;
+                                    Log.i("ClientThread",
+                                        "total=" + total +
+                                         " animals=" + FirstFragment.animals);
+                                    offset += 2;
+                                    for(int j = 0; j < total; j++)
                                     {
-                                        packetState = GET_START_CODE1;
-                                    }
-                                    else
-                                    {
-                                        packetState = GET_START_CODE0;
-                                    }
-                                    break;
-                                case GET_HEADER:
-                                    header[counter++] = (byte)c;
-                                    if(counter >= 8)
-                                    {
-                                        //Log.i("ClientThread", "GET_HEADER ");
-                                        dataSize = read_int32(header, 4);
-                                        packetState = GET_DATA;
-                                        counter = 0;
-                                    }
-                                    break;
-                                case GET_DATA:
-                                    if(counter >= packet.length)
-                                    {
-                                        counter--;
-                                    }
-                                    packet[counter++] = (byte)c;
-                                    if(counter >= dataSize)
-                                    {
-                                        int type = (int)header[2];
-
-                                        //Log.i("ClientThread", "GET_DATA type=" + type);
-                                        if(type == VIJEO)
+                                        for(int k = 0; k < 4; k++)
                                         {
-                                            total += dataSize;
-                                            //Log.i("ClientThread", "VIJEO dataSize=" + dataSize);
-//                                            if(FirstFragment.USE_FFMPEG) {
-//                                                fragment.ffmpeg_stdin.write(packet, 0, dataSize);
-//                                            }
-//                                            else
-//                                            {
-                                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                                                    byte[] packet2 = new byte[dataSize - 4];
-                                                    int packet2_size = dataSize - 4;
-                                                    for(int j = 0; j < packet2_size; j++)
-                                                    {
-                                                        packet2[j] = packet[j + 4];
-                                                    }
-
-                                                    int preview_x = read_int32(packet, 0);
-                                                    ImageDecoder.Source imageSource =
-                                                        ImageDecoder.createSource(ByteBuffer.wrap(packet2, 0, packet2_size));
-                                                    // generates a hardware bitmap
-                                                    Bitmap bitmap = ImageDecoder.decodeBitmap(imageSource);
-//                                                    Log.i("x", "VIJEO w=" + bitmap.getWidth() +
-//                                                            " h=" + bitmap.getHeight() +
-//                                                            " " + bitmap.getColorSpace());
-                                                    fragment.drawVideo(bitmap, preview_x);
-                                                }
-//                                            }
+                                            FirstFragment.coords[j * 4 + k] = read_uint16(packet, offset);
+                                            offset += 2;
                                         }
-                                        else if(type == STATUS)
+                                        int len = 0;
+                                        for(int k = offset; k < dataSize; k++)
                                         {
-                                            fragment.prevOperation = fragment.currentOperation;
-                                            fragment.prevLandscape = fragment.landscape;
-
-                                            fragment.currentOperation = packet[0];
-                                            fragment.facePosition = packet[1];
-                                            fragment.errors = packet[2] & 0xff;
-
-                                            Log.i("ClientThread", "GET_DATA" +
-                                                    " currentOperation=" + fragment.currentOperation +
-                                                    " errors=" + fragment.errors);
-
-                                            handleStatus();
+                                            if(packet[k] == 0) break;
+                                            len++;
                                         }
-
-
-                                        packetState = GET_START_CODE0;
+                                        FirstFragment.names[j] = new String(packet, offset, len);
+                                        offset += len + 1;
                                     }
-                                    break;
+                                    
+
+// extract image
+                                    ImageDecoder.Source imageSource =
+                                    ImageDecoder.createSource(
+                                        ByteBuffer.wrap(packet, offset, dataSize - offset));
+                                    // generates a hardware bitmap
+                                    Bitmap bitmap = null;
+                                    try {
+                                        bitmap = ImageDecoder.decodeBitmap(imageSource);
+                                    } catch (IOException e) {
+                                        e.printStackTrace();
+                                    }
+
+    //                                Log.i("ClientThread", "bitmap=" + bitmap);
+    //                                                    Log.i("x", "VIJEO w=" + bitmap.getWidth() +
+    //                                                            " h=" + bitmap.getHeight() +
+    //                                                            " " + bitmap.getColorSpace());
+
+                                    if(bitmap != null)
+                                        fragment.drawVideo(bitmap);
+                                    else
+                                        fragment.busy = false;
+                                }
+                            }
+                            else if(type == STATUS)
+                            {
+                                fragment.prevOperation = fragment.currentOperation;
+                                fragment.currentOperation = packet[0];
+                                fragment.errors = packet[1] & 0xff;
+
+                                Log.i("ClientThread", "STATUS" +
+                                        " currentOperation=" + fragment.currentOperation +
+                                        " errors=" + fragment.errors);
+
+                                handleStatus();
+                                gotStatus = true;
                             }
 
+
+                            packetState = GET_START_CODE0;
+
+                            if(!gotStatus)
+                            {
+// ping the server to get a 1st status packet
+                                sendCommand('*');
+                            }
                         }
-
-
-                        //Log.i("ClientThread", " total=" + total);
-
-                    } catch (IOException e) {
-                        e.printStackTrace();
                         break;
-                    }
-
-                }
-
-                Log.i("ClientThread", "connection finished");
-                try {
-                    synchronized(this) {
-                        socket.close();
-                        socket = null;
-                    }
-                    Thread.sleep(1000L);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-
-            }
-        }
-    }
-
+                } // switch
+            } // bytes_read
+        } // while
+    } // run
 }

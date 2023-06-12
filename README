@@ -36,7 +36,7 @@ Hardware:
 
 
 cam_bearing.FCStd
-    bearing for motorized panning
+    obsolete bearing for motorized panning
     print bearing inner
     print bearing outer
      - doesn't require support
@@ -76,7 +76,7 @@ efficientlion0.yolo.300.tflite: model for tracking running athletes
     Trained using footage from the truck mounted webcam.
     Labeled using YOLO.
 
-ffmpeg-kit: library used by Android
+ffmpeg-kit: obsolete library used by Android
 
 tensortrack.c:
 trackerserver.c: track 1-2 people with a raspberry PI 4B

@@ -102,16 +102,8 @@ public class Button {
                 textSize);
 
         Rect size = new Rect();
-        if(FirstFragment.landscape)
-        {
-            size.bottom = textSize.width() + MARGIN * 2;
-            size.right = textSize.height() + MARGIN * 2;
-        }
-        else
-        {
-            size.bottom = textSize.height() + MARGIN * 2;
-            size.right = textSize.width() + MARGIN * 2;
-        }
+        size.bottom = textSize.width() + MARGIN * 2;
+        size.right = textSize.height() + MARGIN * 2;
         return size;
     }
 
@@ -217,29 +209,20 @@ public class Button {
                 p.setTypeface(Typeface.create("SansSerif", Typeface.BOLD));
                 p.setTextSize(FirstFragment.TEXT_SIZE);
 
-                if(FirstFragment.landscape) {
-                    // make a temporary canvas for rotating the text
-                    Bitmap temp2 = Bitmap.createBitmap(textSize.width(), textSize.height(), Bitmap.Config.ARGB_8888);
-                    Canvas temp = new Canvas(temp2);
-                    temp.drawText(text, 0, temp.getHeight() - textSize.bottom, p);
+                // make a temporary canvas for rotating the text
+                Bitmap temp2 = Bitmap.createBitmap(textSize.width(), textSize.height(), Bitmap.Config.ARGB_8888);
+                Canvas temp = new Canvas(temp2);
+                temp.drawText(text, 0, temp.getHeight() - textSize.bottom, p);
 
-                    // rotate & draw it
-                    Matrix matrix = new Matrix();
-                    matrix.reset();
-                    matrix.postRotate(90);
-                    matrix.postTranslate(temp.getHeight() / 2 + (rect.left + rect.right) / 2,
-                            -temp.getWidth() / 2 + (rect.top + rect.bottom) / 2);
-                    canvas.drawBitmap(temp2,
-                            matrix,
-                            p);
-                }
-                else
-                {
-                    canvas.drawText(text, (rect.left + rect.right) / 2 - textSize.width() / 2,
-                            rect.bottom - textSize.bottom - MARGIN,
-                            p);
-
-                }
+                // rotate & draw it
+                Matrix matrix = new Matrix();
+                matrix.reset();
+                matrix.postRotate(90);
+                matrix.postTranslate(temp.getHeight() / 2 + (rect.left + rect.right) / 2,
+                        -temp.getWidth() / 2 + (rect.top + rect.bottom) / 2);
+                canvas.drawBitmap(temp2,
+                        matrix,
+                        p);
             }
         }
     }

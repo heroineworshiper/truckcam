@@ -42,19 +42,10 @@ public class Text {
     void calculateRect()
     {
         Rect temp = calculateSize(text);
-        if(FirstFragment.landscape) {
-            rect.left = x - temp.height() / 2;
-            rect.top = y;
-            rect.right = rect.left + temp.height();
-            rect.bottom = rect.top + temp.width();
-        }
-        else
-        {
-            rect.left = x;
-            rect.top = y - temp.height() / 2;
-            rect.right = rect.left + temp.width();
-            rect.bottom = rect.top + temp.height();
-        }
+        rect.left = x - temp.height() / 2;
+        rect.top = y;
+        rect.right = rect.left + temp.height();
+        rect.bottom = rect.top + temp.width();
     }
 
     int getW()
@@ -80,28 +71,22 @@ public class Text {
         p.setTextSize(FirstFragment.TEXT_SIZE);
         Rect text_size = calculateSize(text);
 
-        if(FirstFragment.landscape) {
-            // make a temporary canvas for rotating the text
-            Bitmap temp2 = Bitmap.createBitmap(text_size.width(), text_size.height(), Bitmap.Config.ARGB_8888);
-            Canvas temp = new Canvas(temp2);
-            temp.drawText(text, 0, temp.getHeight() - text_size.bottom, p);
+// make a temporary canvas for rotating the text
+        Bitmap temp2 = Bitmap.createBitmap(text_size.width(), text_size.height(), Bitmap.Config.ARGB_8888);
+        Canvas temp = new Canvas(temp2);
+        temp.drawText(text, 0, temp.getHeight() - text_size.bottom, p);
 
-            // rotate & draw it
-            Matrix matrix = new Matrix();
-            matrix.reset();
-            //matrix.postTranslate(-temp.getWidth() / 2,
-            //        -temp.getHeight() / 2); // Centers image
-            matrix.postRotate(90);
-            matrix.postTranslate(temp.getHeight() / 2 + (rect.left + rect.right) / 2,
-                    -temp.getWidth() / 2 + (rect.top + rect.bottom) / 2);
-            canvas.drawBitmap(temp2,
-                    matrix,
-                    p);
-        }
-        else
-        {
-            canvas.drawText(text, rect.left, rect.bottom - text_size.bottom, p);
-        }
+// rotate & draw it
+        Matrix matrix = new Matrix();
+        matrix.reset();
+        //matrix.postTranslate(-temp.getWidth() / 2,
+        //        -temp.getHeight() / 2); // Centers image
+        matrix.postRotate(90);
+        matrix.postTranslate(temp.getHeight() / 2 + (rect.left + rect.right) / 2,
+                -temp.getWidth() / 2 + (rect.top + rect.bottom) / 2);
+        canvas.drawBitmap(temp2,
+                matrix,
+                p);
     }
 
 

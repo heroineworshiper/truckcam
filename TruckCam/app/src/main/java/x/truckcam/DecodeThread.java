@@ -21,13 +21,6 @@ class DecodeThread implements Runnable
         byte[] buffer = new byte[0x10000];
 
 
-        try {
-            fragment.ffmpeg_stdout = new FileInputStream(new File(fragment.stdoutPath));
-
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
         int inputOffset = 0;
         int outputOffset = 0;
 //        byte[] dst = fragment.frameBuffer[fragment.currentFrameBuffer].array();

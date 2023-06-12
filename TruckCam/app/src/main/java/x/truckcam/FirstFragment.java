@@ -40,6 +40,7 @@ import java.nio.IntBuffer;
 import java.util.Vector;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.Formatter;
 
 import androidx.annotation.NonNull;
 import androidx.fragment.app.Fragment;
@@ -53,35 +54,36 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
 
     private FragmentFirstBinding binding;
     SurfaceView video;
-//    ByteBuffer[] frameBuffer = new ByteBuffer[2];
-//    int currentFrameBuffer = 0;
     Bitmap videoBitmap;
     Canvas videoCanvas;
     ClientThread client;
 
+    static final int MAX_ANIMALS = 5;
+    static int animals;
+// raw, interleaved x & y coords of rectangles
+    static int[] coords = new int[MAX_ANIMALS * 4];
+// names of animals
+    static String[] names = new String[MAX_ANIMALS];
+    
+// in case frames come in faster than we can draw them
+    static boolean busy = false;
 
     // size of the cropped preview video
     static final int W = 640;
     static final int H = 360;
-    static OutputStream ffmpeg_stdin;
-    static InputStream ffmpeg_stdout;
-    static String stdinPath;
-    static String stdoutPath;
 
-
+    static float dstX;
+    static float dstY;
+    static float dstH;
+    static float dstW;
 
     final int OFF = -1;
     final int IDLE  = 0;
     final int TRACKING = 1;
     int currentOperation = OFF;
     int prevOperation = OFF;
-    final int FACE_LEFT = 0;
-    final int FACE_CENTER = 1;
-    final int FACE_RIGHT = 2;
-    int facePosition = FACE_CENTER;
 
-    static boolean landscape = true;
-    static boolean prevLandscape = false;
+    static float fps = 0;
 
 // error codes
     final int VIDEO_DEVICE_ERROR = 1;
@@ -97,12 +99,11 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
     Vector<Button> buttons = new Vector();
     Vector<Text> texts = new Vector();
     Button activateButton;
-//    Button leftButton;
-//    Button centerButton;
-//    Button rightButton;
     Text videoDeviceError;
     Text videoBufferError;
     Text servoError;
+    Text fpsText;
+
     static final int MARGIN = 40;
     static final int ARROW_MARGIN = 20;
     static final int TEXT_SIZE = 40;
@@ -112,7 +113,8 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
             LayoutInflater inflater, ViewGroup container,
             Bundle savedInstanceState
     ) {
-        // landscape mode with no status bar
+// Always draw synthetic landscape widgets to get more space
+// landscape mode with no status bar
 //        getActivity().setRequestedOrientation(
 //                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
 //        View decorView = getActivity().getWindow().getDecorView();
@@ -153,14 +155,6 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         videoCanvas = new Canvas();
         videoCanvas.setBitmap(videoBitmap);
 
-//        for(int i = 0; i < 2; i++) {
-//            frameBuffer[i] = ByteBuffer.allocateDirect(videoBitmap.getByteCount());
-//        }
-
-
-//        if(USE_FFMPEG) {
-//            new Thread(new DecodeThread(this)).start();
-//        }
         new Thread(client = new ClientThread(this)).start();
 
     }
@@ -218,39 +212,24 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
                                0,
                                text.length(),
                                text_size);
-                    if(landscape) {
-                        // make a temporary canvas for rotating the text
-                        Bitmap temp2 = Bitmap.createBitmap(text_size.width(), text_size.height(), Bitmap.Config.ARGB_8888);
-                        Canvas temp = new Canvas(temp2);
-                        temp.drawText(text, 0, temp.getHeight() - text_size.bottom, p);
+                    // make a temporary canvas for rotating the text
+                    Bitmap temp2 = Bitmap.createBitmap(text_size.width(), text_size.height(), Bitmap.Config.ARGB_8888);
+                    Canvas temp = new Canvas(temp2);
+                    temp.drawText(text, 0, temp.getHeight() - text_size.bottom, p);
 
-                        // rotate & draw it
-                        Matrix matrix = new Matrix();
-                        matrix.reset();
-                        matrix.postTranslate(-temp.getWidth() / 2, -temp.getHeight() / 2); // Centers image
-                        matrix.postRotate(90);
-                        matrix.postTranslate(canvas.getWidth() / 2, canvas.getHeight() / 2);
+                    // rotate & draw it
+                    Matrix matrix = new Matrix();
+                    matrix.reset();
+                    matrix.postTranslate(-temp.getWidth() / 2, -temp.getHeight() / 2); // Centers image
+                    matrix.postRotate(90);
+                    matrix.postTranslate(canvas.getWidth() / 2, canvas.getHeight() / 2);
 
-                        p.setColor(Color.BLACK);
-                        canvas.drawRect(new Rect(0, 0, canvas.getWidth(), canvas.getHeight()), p);
-                        canvas.drawBitmap(temp2,
-                                matrix,
-                                p);
-                    }
-                    else
-                    {
-                        p.setColor(Color.BLACK);
-                        canvas.drawRect(new Rect(0,
-                                canvas.getHeight() / 2 - text_size.height() / 2,
-                                canvas.getWidth(),
-                                canvas.getHeight() / 2 + text_size.height() / 2), p);
-                        p.setColor(Color.GREEN);
-                        canvas.drawText(text,
-                                canvas.getWidth() / 2 - text_size.width() / 2,
-                                canvas.getHeight() / 2 + text_size.height() / 2 - text_size.bottom,
-                                p);
+                    p.setColor(Color.BLACK);
+                    canvas.drawRect(new Rect(0, 0, canvas.getWidth(), canvas.getHeight()), p);
+                    canvas.drawBitmap(temp2,
+                            matrix,
+                            p);
 
-                    }
 
 //Log.i("FirstFragment", "drawStatus " + text);
                     video.getHolder().unlockCanvasAndPost(canvas);
@@ -263,55 +242,27 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         });
     }
 
-    public void drawVideo(Bitmap bitmap, int preview_x)
-    {
+    public void drawVideo(Bitmap bitmap) {
         getActivity().runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 Canvas canvas = video.getHolder().lockCanvas();
 
                 if(canvas != null) {
-                    // overlay cropped section
                     Paint p = new Paint();
-                    // must convert to a software bitmap for draw()
+// must convert to a software bitmap for draw()
                     Bitmap softBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false);
-// ignore preview_x to display the entire viewfinder
-                    //videoCanvas.drawBitmap(softBitmap, preview_x, 0, p);
                     videoCanvas.drawBitmap(softBitmap, 0, 0, p);
+
+
                     drawGUI(canvas);
+
                     video.getHolder().unlockCanvasAndPost(canvas);
                 }
+                busy = false;
             }
         });
     }
-
-//    public void drawVideo() {
-//        getActivity().runOnUiThread(new Runnable() {
-//            @Override
-//            public void run() {
-//                Canvas canvas = video.getHolder().lockCanvas();
-//
-//                if(canvas != null) {
-////                    Paint p = new Paint();
-////                    p.setColor(Color.BLACK);
-////                    p.setStyle(Paint.Style.FILL);
-////
-////                    canvas.drawRect(new Rect(0, 0, canvas.getWidth(), canvas.getHeight()), p);
-//
-//                    int current = currentFrameBuffer - 1;
-//                    if (current < 0)
-//                    {
-//                        current = 1;
-//                    }
-//                    videoBitmap.copyPixelsFromBuffer(frameBuffer[current]);
-//                    frameBuffer[current].rewind();
-//                    drawGUI(canvas);
-//
-//                    video.getHolder().unlockCanvasAndPost(canvas);
-//                }
-//            }
-//        });
-//    }
 
     boolean updateErrors()
     {
@@ -327,18 +278,6 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
             @Override
             public void run() {
                 boolean needRedraw = false;
-//                if(leftButton != null)
-//                {
-//                    needRedraw |= leftButton.updateText(getLeftText());
-//                }
-//                if(centerButton != null)
-//                {
-//                    needRedraw |= centerButton.updateText(getCenterText());
-//                }
-//                if(rightButton != null)
-//                {
-//                    needRedraw |= rightButton.updateText(getRightText());
-//                }
 
                 needRedraw |= updateErrors();
 
@@ -359,9 +298,6 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         texts.clear();
 
         activateButton = null;
-//        leftButton = null;
-//        centerButton = null;
-//        rightButton = null;
 
 
 
@@ -370,41 +306,29 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         if (canvas != null) {
             int x, y;
             Rect size = Text.calculateSize("X");
-            if(landscape) {
-                x = canvas.getWidth() / 4;
-                y = canvas.getHeight() / 2;
-            }
-            else
-            {
-                x = MARGIN;
-                y = size.height() / 2 + MARGIN;
-            }
+            x = canvas.getWidth() / 4;
+            y = canvas.getHeight() / 2;
+
+// landscape mode
+            fpsText = new Text(canvas.getWidth() - size.height(), 
+                0, "FPS: ");
+            fpsText.color = Color.GREEN;
+            texts.add(fpsText);
 
 
             videoDeviceError = new Text(x, y, "VIDEO DEVICE NOT FOUND");
             videoDeviceError.color = Color.RED;
-            if(landscape) {
-                x += canvas.getWidth() / 4;
-            }
-            else
-            {
-                y += canvas.getHeight() / 8;
-            }
+            x += canvas.getWidth() / 4;
             videoBufferError = new Text(x, y, "VIDEO CAPTURE FAILED");
             videoBufferError.color = Color.RED;
-            if(landscape) {
-                x += canvas.getWidth() / 4;
-            }
-            else
-            {
-                y += canvas.getHeight() / 8;
-            }
+            x += canvas.getWidth() / 4;
+
             servoError = new Text(x, y, "SERVO DEVICE NOT FOUND");
             servoError.color = Color.RED;
 
             texts.add(videoDeviceError);
             texts.add(videoBufferError);
-//            texts.add(servoError);
+            texts.add(servoError);
             updateErrors();
 
             switch(currentOperation)
@@ -419,15 +343,8 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
                         text = "ABORT";
                     }
                     size = Button.calculateSize(text, null);
-                    if(landscape) {
-                        x = canvas.getWidth() - size.width() * 2 - MARGIN;
-                        y = MARGIN + size.height() / 2;
-                    }
-                    else
-                    {
-                        x = canvas.getWidth() / 2;
-                        y = canvas.getHeight() * 3 / 4;
-                    }
+                    x = canvas.getWidth() - size.width() * 2 - MARGIN;
+                    y = MARGIN + size.height() / 2;
 
 
                     activateButton = new Button(x, y, text);
@@ -445,50 +362,6 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
                     };
                     buttons.add(activateButton);
 
-                    y = MARGIN;
-//                    text = "FACE POSITION:";
-//                    size = Text.calculateSize(text);
-//                    x -= activateButton.getW() + MARGIN;
-//                    Text t = new Text(x, y, text);
-//                    texts.add(t);
-//
-//                    text = getLeftText();
-//                    size = Button.calculateSize("O", null);
-//                    x -= t.getW() + MARGIN + size.width() / 2;
-//                    y = MARGIN + size.height() / 2;
-//                    leftButton = new Button(x, y, text);
-//                    leftButton.listener = new Button.ButtonListener() {
-//                        @Override
-//                        public void onClick() {
-//                            Log.i("FirstFragment", "LEFT");
-//                            client.sendCommand('l');
-//                        }
-//                    };
-//                    buttons.add(leftButton);
-//
-//                    y += MARGIN + size.height() * 2;
-//                    centerButton = new Button(x, y, getCenterText());
-//                    centerButton.listener = new Button.ButtonListener() {
-//                        @Override
-//                        public void onClick() {
-//                            Log.i("FirstFragment", "CENTER");
-//                            client.sendCommand('c');
-//                        }
-//                    };
-//
-//                    buttons.add(centerButton);
-//                    y += MARGIN + size.height() * 2;
-//                    rightButton = new Button(x, y, getRightText());
-//                    rightButton.listener = new Button.ButtonListener() {
-//                        @Override
-//                        public void onClick() {
-//                            Log.i("FirstFragment", "RIGHT");
-//                            client.sendCommand('r');
-//                        }
-//                    };
-//                    buttons.add(rightButton);
-
-//                    x -= MARGIN + size.width() * 2;
                     x = MARGIN + size.width() * 2;
                     text = "UPDATE SETTINGS";
                     size = Button.calculateSize(text, null);
@@ -517,22 +390,6 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
 
     }
 
-    String getLeftText()
-    {
-        String text = (facePosition == FACE_LEFT) ? "*" : "";
-        return "L" + text;
-    }
-
-    String getCenterText() {
-        String text = (facePosition == FACE_CENTER) ? "*" : "";
-        return "C" + text;
-    }
-
-    String getRightText()
-    {
-        String text = (facePosition == FACE_RIGHT) ? "*" : "";
-        return "R" + text;
-    }
 
     public void changeOperation() {
         getActivity().runOnUiThread(new Runnable() {
@@ -542,6 +399,19 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
                                         }
                                     }
         );
+    }
+
+// convert the coords to a Rect with screen dimensions
+    public Rect serverToScreen(int x1, int y1, int x2, int y2)
+    {
+        int x3, y3, x4, y4;
+// scale & transpose to screen positions in landscape
+        x3 = (int)(dstX + dstW / 2 - y2 * dstW / H);
+        x4 = (int)(dstX + dstW / 2 - y1 * dstW / H);
+        y3 = (int)(dstY - dstH / 2 + x1 * dstH / W);
+        y4 = (int)(dstY - dstH / 2 + x2 * dstH / W);
+//Log.i("x", "serverToScreen " + x3 + " " + y3 + " "  + x4 + " "  + y4);
+        return new Rect(x3, y3, x4, y4);
     }
 
     public void drawGUI(Canvas canvas) {
@@ -556,27 +426,56 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
         p.setColor(Color.DKGRAY);
         canvas.drawRect(new Rect(0, 0, canvas.getWidth(), canvas.getHeight()), p);
 
-        float dstX = canvas.getWidth() / 2;
-        float dstY = canvas.getHeight() / 2;
+        dstX = canvas.getWidth() / 2;
+        dstY = canvas.getHeight() / 2;
 
         Matrix matrix = new Matrix();
         matrix.reset();
         matrix.postTranslate(-W / 2, -H / 2); // Centers source image
 
-        float dstH;
-        float dstW;
         float scale;
         dstW = canvas.getWidth();
         scale = dstW / H;
+        dstH = dstW * 16 / 9;
         matrix.postScale(scale, scale);
         matrix.postRotate(90);
         matrix.postTranslate(dstX, dstY);
+
+//Log.i("x", "drawGUI");
 
 //        Log.i("x", "drawGUI w=" + videoBitmap.getWidth() + " h=" + videoBitmap.getHeight());
 
         canvas.drawBitmap(videoBitmap,
                 matrix,
                 p);
+
+// draw bounding boxes
+        p.setStyle(Paint.Style.STROKE);
+        p.setColor(0xff00ff00);
+        p.setStrokeWidth(4);
+        for(int j = 0; j < animals; j++)
+        {
+            int x1 = coords[j * 4 + 0] / 2;
+            int y1 = coords[j * 4 + 1] / 2;
+            int x2 = coords[j * 4 + 2] / 2;
+            int y2 = coords[j * 4 + 3] / 2;
+//Log.i("x", "drawGUI " + x1 + " " + y1 + " "  + x2 + " "  + y2);
+
+            Rect screenCoords = serverToScreen(x1, y1, x2, y2);
+            canvas.drawRect(screenCoords, p);
+
+            if(names[j].length() > 0)
+            {
+                Text nameText = new Text(screenCoords.left, 
+                    screenCoords.bottom, 
+                    names[j]);
+                nameText.draw(canvas);
+            }
+        }
+
+        StringBuilder sb = new StringBuilder();
+        Formatter formatter = new Formatter(sb);
+        if(fpsText != null) fpsText.updateText("FPS: " + formatter.format("%.02f", fps));
 
         for (int i = 0; i < buttons.size(); i++)
         {
