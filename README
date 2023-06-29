@@ -49,8 +49,16 @@ cam_bearing.FCStd
     print right angle coupling with right hole pattern to create a right angle
     requires ironing
 
-cam_motor.FCStd:
+cam_bearing2.FCStd:
+    Bearing against the carbon fiber without an inner part.
+
+cam_motor3.FCStd:
     brushless servo as a stepper motor for panning
+    attaches to truck container
+
+cam_static.FCStd:
+    fixed camera pole
+    use jig to bond the CF clamp pieces
 
 enclosure.FCStd: enclosure for a raspberri PI 4B & servo driver
 

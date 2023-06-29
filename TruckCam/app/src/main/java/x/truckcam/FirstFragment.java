@@ -58,12 +58,13 @@ public class FirstFragment extends Fragment implements View.OnTouchListener {
     Canvas videoCanvas;
     ClientThread client;
 
-    static final int MAX_ANIMALS = 5;
+// max faces + max bodies
+    static final int MAX_BOXES = 10;
     static int animals;
 // raw, interleaved x & y coords of rectangles
-    static int[] coords = new int[MAX_ANIMALS * 4];
+    static int[] coords = new int[MAX_BOXES * 4];
 // names of animals
-    static String[] names = new String[MAX_ANIMALS];
+    static String[] names = new String[MAX_BOXES];
     
 // in case frames come in faster than we can draw them
     static boolean busy = false;

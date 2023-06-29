@@ -345,8 +345,8 @@ class ClientThread implements Runnable {
                                     FirstFragment.fps = (float)fps_i / 256;
                                     int total = read_uint16(packet, offset);
                                     FirstFragment.animals = total;
-                                    if(FirstFragment.animals > FirstFragment.MAX_ANIMALS)
-                                        FirstFragment.animals = FirstFragment.MAX_ANIMALS;
+                                    if(FirstFragment.animals > FirstFragment.MAX_BOXES)
+                                        FirstFragment.animals = FirstFragment.MAX_BOXES;
                                     Log.i("ClientThread",
                                         "total=" + total +
                                          " animals=" + FirstFragment.animals);
