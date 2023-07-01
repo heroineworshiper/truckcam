@@ -2,7 +2,7 @@
 """
 Label just the lions.
 
-Output XML files for training tensorflow.
+Output XML files or JSON for training tensorflow.
 
 Copies the images to some hard coded directories.
 
@@ -10,7 +10,7 @@ Copies the images to some hard coded directories.
 # https://github.com/ultralytics/yolov5/releases/tag/v6.1
 
 # Enter the virtual python environment.  
-source /root/yolov5/YoloV5_VirEnv/bin/activate
+source YoloV5_VirEnv/bin/activate
 
 # Run it as 
 python3 label.py --weights yolov5x6.pt
@@ -20,18 +20,28 @@ python3 label.py --weights yolov5x6.pt
 
 # total validation images.
 TOTAL_VAL = 100
+#TOTAL_VAL = 10
 # total training images
 TOTAL_TRAIN = 1000
+#TOTAL_TRAIN = 10
 # source for the images
 SRC_DIR = '../lion_images2/'
-# destinations for the XML files & images
+# destination for the annotations & images
 VAL_DIR = '../val_lion/'
 TRAIN_DIR = '../train_lion/'
 WANT_CLS = 0  # person ID
-NEW_CATEGORY = 'Lion'
+NEW_CATEGORY = 'lion'
 
+# annotation format
+XML_ANNOTATION = False  # for efficientdet_lite
+JSON_ANNOTATION = True  # for efficientdet
+# destination for JSON annotations
+TRAIN_ANNOTATIONS = '../train_lion/instances_train.json'
+VAL_ANNOTATIONS = '../val_lion/instances_val.json'
 
-
+# output image size
+DST_W = 640
+DST_H = 640
 
 import argparse
 import os
@@ -60,7 +70,10 @@ from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, time_sync
 from utils.augmentations import Albumentations, augment_hsv, copy_paste, letterbox, mixup, random_perspective
 
-
+dst_train_files = []
+dst_train_rects = []
+dst_val_files = []
+dst_val_rects = []
 
 
 
@@ -161,6 +174,8 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
     stride, names, pt, jit, onnx, engine = model.stride, model.names, model.pt, model.jit, model.onnx, model.engine
     imgsz = check_img_size(imgsz, s=stride)  # check image size
 
+    print('TOTAL_VAL=%d TOTAL_TRAIN=%d\n' % (TOTAL_VAL, TOTAL_TRAIN))
+
     # Half
     half &= (pt or jit or onnx or engine) and device.type != 'cpu'  # FP16 supported on limited backends with CUDA
     if pt or jit:
@@ -176,8 +191,15 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
     model.warmup(imgsz=(1 if pt else bs, 3, *imgsz), half=half)  # warmup
     dt, seen = [0.0, 0.0, 0.0], 0
     counter = 0
+    done = False
     for path, im, im0s, vid_cap, s in dataset:
+        if done: break
+
         t1 = time_sync()
+
+# image im is stretched to 640x384 to meet stride requirements
+
+
         im = torch.from_numpy(im).to(device)
         im = im.half() if half else im.float()  # uint8 to fp16/32
         im /= 255  # 0 - 255 to 0.0 - 1.0
@@ -201,6 +223,8 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
 
         # Process predictions
         for i, det in enumerate(pred):  # per image
+            if done: break
+
             seen += 1
             if webcam:  # batch_size >= 1
                 p, im0, frame = path[i], im0s[i].copy(), dataset.count
@@ -220,13 +244,16 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
 
 # save the training data
                 if counter < TOTAL_VAL:
+                    is_train = False
                     dst_img = VAL_DIR + p.name
                     dst_xml = VAL_DIR + p.stem + '.xml'
                 elif counter < TOTAL_VAL + TOTAL_TRAIN:
+                    is_train = True
                     dst_img = TRAIN_DIR + p.name
                     dst_xml = TRAIN_DIR + p.stem + '.xml'
                 else:
-                    return
+                    done = True
+                    break
 
 #                print('counter=%d path=%s dst_img=%s dst_xml=%s' % 
 #                    (counter, path, dst_img, dst_xml));
@@ -263,33 +290,60 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
                 if best_area < 0:
                     print("%s didn't have a lion" % path)
                 else:
+                
+# reload the original image for scaling
+                    im_orig = cv2.imread(path)
+#                    print("path=%s h=%d w=%d" % (path, im_orig.shape[0], im_orig.shape[1]))
+                    w = im_orig.shape[1]
+                    h = im_orig.shape[0]
+                    rect = [int(best_x1 * DST_W / w), 
+                            int(best_y1 * DST_H / h), 
+                            int(best_x2 * DST_W / w), 
+                            int(best_y2 * DST_H / h)]
+# copy the image file
+                    if DST_W == w and DST_H == h:
+                        shutil.copy(path, dst_img)
+                    else:
+# scale the image file
+                        im_scaled = cv2.resize(im_orig, (DST_W, DST_H))
+                        cv2.imwrite(dst_img, im_scaled)
+                
+                    if XML_ANNOTATION:
 # generate the XML
-                    file = open(dst_xml, 'w')
-                    file.write('<annotation>\n' + 
-                        '\t<filename>' + p.name + '</filename>\n' + 
-                        '\t<path>' + os.path.abspath(dst_img) + '</path>\n' + 
-                        '\t<source><database>Unknown</database></source>\n' + 
-                        '\t<size>\n' + 
-                        '\t\t<width>' + str(img_w) + '</width>' + 
-                        '<height>' + str(img_h) + '</height>' + 
-                        '<depth>3</depth>\n' + 
-                        '\t</size>\n' +
-                        '\t<segmented>0</segmented>\n')
-                    file.write('\t<object>\n' +
-                        '\t\t<name>' + NEW_CATEGORY + '</name>\n' +
-                        '\t\t<pose>Unspecified</pose>\n' +
-                        '\t\t<truncated>0</truncated>\n' +
-                        '\t\t<difficult>0</difficult>\n' +
-                        '\t\t<bndbox>\n' +
-                        '\t\t\t<xmin>' + str(best_x1) + '</xmin>' + 
-                        '<ymin>' + str(best_y1) + '</ymin>' +
-                        '<xmax>' + str(best_x2) + '</xmax>' +
-                        '<ymax>' + str(best_y2) + '</ymax>\n' +
-                        '\t\t</bndbox>\n' +
-                        '\t</object>\n')
-                    file.write('</annotation>\n')
-                    file.close()
-                    shutil.copy(path, dst_img)
+                        file = open(dst_xml, 'w')
+                        file.write('<annotation>\n' + 
+                            '\t<filename>' + p.name + '</filename>\n' + 
+                            '\t<path>' + os.path.abspath(dst_img) + '</path>\n' + 
+                            '\t<source><database>Unknown</database></source>\n' + 
+                            '\t<size>\n' + 
+                            '\t\t<width>' + str(DST_W) + '</width>' + 
+                            '<height>' + str(DST_H) + '</height>' + 
+                            '<depth>3</depth>\n' + 
+                            '\t</size>\n' +
+                            '\t<segmented>0</segmented>\n')
+                        file.write('\t<object>\n' +
+                            '\t\t<name>' + NEW_CATEGORY + '</name>\n' +
+                            '\t\t<pose>Unspecified</pose>\n' +
+                            '\t\t<truncated>0</truncated>\n' +
+                            '\t\t<difficult>0</difficult>\n' +
+                            '\t\t<bndbox>\n' +
+                            '\t\t\t<xmin>' + str(rect[0]) + '</xmin>' + 
+                            '<ymin>' + str(rect[1]) + '</ymin>' +
+                            '<xmax>' + str(rect[2]) + '</xmax>' +
+                            '<ymax>' + str(rect[3]) + '</ymax>\n' +
+                            '\t\t</bndbox>\n' +
+                            '\t</object>\n')
+                        file.write('</annotation>\n')
+                        file.close()
+                    else:
+# generate the JSON
+                        if is_train:
+                            dst_train_files.append(p.name)
+                            dst_train_rects.append(rect)
+                        else:
+                            dst_val_files.append(p.name)
+                            dst_val_rects.append(rect)
+
                     counter += 1
 
 
@@ -344,6 +398,76 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
 
         # Print time (inference-only)
         LOGGER.info(f'{s}Done. ({t3 - t2:.3f}s)')
+
+# Save annotation files
+# 1 big file for all the annotations
+    if JSON_ANNOTATION:
+        for i in range(2):
+            if i == 0:
+                path = VAL_ANNOTATIONS
+                dst_files = dst_val_files
+                dst_rects = dst_val_rects
+            else:
+                path = TRAIN_ANNOTATIONS
+                dst_files = dst_train_files
+                dst_rects = dst_train_rects
+
+            file = open(path, 'w')
+            file.write('{\"info\": \n')
+            file.write('\t{\"description\": \"\", \"url\": \"\", \"version\": \"\", \"year\": 2020, \"contributor\": \"\", \"date_created\": \"2020-04-14 01:45:07.508229\"}, \n')
+            file.write('\t\"licenses\": [{\"id\": 1, \"name\": null, \"url": null}], \n')
+            file.write('\t\"categories\": [{\"id\": 1, \"name\": \"lion\", \"supercategory\": \"None\"}], \n')
+            file.write('\t\"images\": [\n')
+
+            id = 0
+            for name in dst_files:
+                file.write('\t\t{\"id\": ' + 
+                    str(id) + 
+                    ', \"file_name\": \"' + 
+                    name + 
+                    '\", \"width\": ' + 
+                    str(DST_W) + 
+                    ', \"height\": ' + 
+                    str(DST_H) + 
+                    ', \"date_captured\": \"2020-04-14 01:45:07.508146\", \"license\": 1, \"coco_url\": \"\", \"flickr_url\": \"\"}')
+                if id < len(dst_files) - 1:
+                    file.write(', \n')
+                else:
+                    file.write('\n')
+                id += 1
+            file.write('\t], \n')
+            file.write('\t\"annotations\": [\n')
+
+            id = 0
+            for rect in dst_rects:
+                x1 = rect[0]
+                y1 = rect[1]
+                x2 = rect[2]
+                y2 = rect[3]
+                w = x2 - x1
+                h = y2 - y1
+                area = (x2 - x1) * (y2 - y1)
+                file.write('\t\t{\"id\": ' + 
+                    str(id) + 
+                    ', \"image_id\": ' +
+                    str(id) +
+                    ', \"category_id\": 1, \"iscrowd\": 0, \"area\": ' +
+                    str(area) + 
+                    ', \n')
+                file.write('\t\t\t\"bbox\": [' + str(x1) + ', ' + str(y1) + ', ' + str(w) + ', ' + str(h) + '], \n')
+                file.write('\t\t\t\"segmentation\": [[' + str(x1) + ', ' + str(y1) + ', ' + str(x2) + ', ' + str(y1) + ', ' + str(x2) + ', ' + str(y2) + ', ' + str(x1) + ', ' + str(y2) + ']]}')
+                if id < len(dst_rects) - 1:
+                    file.write(', \n')
+                else:
+                    file.write('\n')
+                id += 1
+            file.write('\t]\n')
+            file.write('}\n')
+            file.close()
+            print('Wrote ' + path)
+
+
+
 
     # Print results
     t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
