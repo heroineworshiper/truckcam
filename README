@@ -88,7 +88,7 @@ efficientlion0.yolo.300.tflite: model for tracking running athletes
 
 ffmpeg-kit: obsolete library used by Android
 
-servo_board.FCStd: enclosure for the cam2.pcb board which is part of the
+servo_board2.FCStd: enclosure for the cam2.pcb board which is part of the
     3D printed truck
 
 tensortrack.c:
