@@ -39,6 +39,7 @@ public class MainActivity extends AppCompatActivity {
         appBarConfiguration = new AppBarConfiguration.Builder(navController.getGraph()).build();
         NavigationUI.setupActionBarWithNavController(this, navController, appBarConfiguration);
 
+        init();
 
 //        binding.fab.setOnClickListener(new View.OnClickListener() {
 //            @Override
@@ -49,6 +50,25 @@ public class MainActivity extends AppCompatActivity {
 //        });
     }
 
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        init();
+
+    }
+
+    @Override
+    protected void onRestart() {
+        super.onRestart();
+        init();
+    }
+
+    static void init()
+    {
+        if(FirstFragment.first != null && FirstFragment.client == null)
+            new Thread(FirstFragment.client = new ClientThread(FirstFragment.first)).start();
+    }
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {

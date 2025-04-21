@@ -28,10 +28,8 @@
 
 
 
-#include <opencv4/opencv2/dnn.hpp>
 #include <opencv4/opencv2/imgproc.hpp>
 #include <opencv4/opencv2/highgui.hpp>
-#include <opencv4/opencv2/objdetect.hpp>
 
 #include "tensorflow/lite/interpreter.h"
 #include "tensorflow/lite/kernels/register.h"
@@ -57,7 +55,6 @@
 #include <queue>
 
 #include "tracker.h"
-#include "trackerlib.h"
 #include "trackerserver.h"
 #include "truckflow.h"
 
@@ -70,6 +67,9 @@ using namespace cv;
 using namespace std;
 
 
+#define POSE_MODEL "movenet_multipose.tflite"
+//#define POSE_MODEL "movenet_thunder.tflite"
+//#define POSE_MODEL "posenet.tflite"
 //#define MODEL "efficientlion0.yolo.300.tflite"
 #define MODEL "efficientlion-lite1.300.tflite"
 //#define MODEL "efficientlion-lite2.10.tflite"
@@ -80,13 +80,13 @@ using namespace std;
 
 
 //#define READ_TEST_IMAGE
-//#define READ_TEST_VIDEO
-//#define TEST_VIDEO_PATH "test_video.mp4"
-#define TEST_VIDEO_PATH "multi_animal4.mp4"
-//#define TEST_VIDEO_PATH "67f81122-2c97-49e7-8d32-2ac8fee315a4.mp4"
 
 // score required to get a hit with efficientdet
 #define THRESHOLD 0.5
+
+// thresholds for movenet
+#define ANIMAL_THRESHOLD 0.11
+#define KEYPOINT_THRESHOLD 0.05
 
 // analog values from arm_cam.c
 // an offset is added to the ADC to get this range
@@ -101,6 +101,12 @@ using namespace std;
 #define MAX_LEFT (ADC_CENTER + ADC_MAX)
 #define MAX_RIGHT (ADC_CENTER - ADC_MAX)
 
+// scale from pixels to percent of screen size
+#define TO_PERCENT_Y(y) ((y) * 100 / h)
+#define TO_PERCENT_X(x) ((x) * 100 / w)
+// scale from percent of screen size to pixels
+#define FROM_PERCENT_Y(y) ((y) * h / 100)
+#define FROM_PERCENT_X(x) ((x) * w / 100)
 
 // pointers for server writer
 // when the value is <= 0, the buffer is ready to accept new data
@@ -120,28 +126,23 @@ int have_settings = 0;
 uint8_t servo_config[SERVO_CONFIG_SIZE];
 
 
-// device buffers
-#define DEVICE_BUFFERS 1
-unsigned char *mmap_buffer[DEVICE_BUFFERS];
+// device buffer
+unsigned char *mmap_buffer;
 // detect USB enumeration
+// webcam has multiple IDs
+#define WEBCAM_VID1 0x1b3f
+#define WEBCAM_PID1 0x2202
+#define WEBCAM_VID2 0x1b3f
+#define WEBCAM_PID2 0x8301
+#define HDMI_VID 0x534d
+#define HDMI_PID 0x2109
 #define FISHEYE_VID 0x32e4
 #define FISHEYE_PID 0x9230
 
 // decompressed images
-// planar YUV420
-uint8_t *raw_y = 0;
-uint8_t *raw_u = 0;
-uint8_t *raw_v = 0;
-// defished image in YUV444 planar
-Mat defished_y;
-Mat defished_u;
-Mat defished_v;
 #define IMAGE_BUFFERS 2
-// preview image for phone & efficientlion
-Mat preview_y;
-Mat preview_u;
-Mat preview_v;
-Mat preview[IMAGE_BUFFERS];
+Mat raw_image[IMAGE_BUFFERS];
+Mat defished[IMAGE_BUFFERS];
 int current_input = 0;
 
 #define PARSE_COMMAND 0
@@ -152,72 +153,55 @@ uint8_t read_packet[16];
 
 
 #define BUFSIZE2 0x400000
-int got_image = 0;
+// compressed frame from the webcam
+unsigned char reader_buffer3[BUFSIZE2];
+// size of the frame in reader_buffer3
+int frame_size;
 static pthread_mutex_t frame_lock;
 static sem_t frame_ready_sema;
 int hdmi_fd = -1;
 struct timespec fps_time1;
 char current_path[TEXTLEN] = { 0 };
-// input size for the neural network
-int input_w = 0;
-int input_h = 0;
 
 
+
+// threads per tile
+#ifdef KEYCAM
+// size of tile for efficientdet
+#define TILE_W TRUCK_H
+#define TILE_H TRUCK_H
+#define THREADS 1
+#define TILES 3
+const int tile_x[] = { 0, 280, 560 };
+// size of preview for phone
+#define PREVIEW_W 640
+#define PREVIEW_H 360
+#endif
 
 #ifdef FISHEYE
 // everything is scaled to the input layer size during defishing
 // size of tile for efficientdet
-#define TILE_W input_w
-#define TILE_H input_h
-#define DEFISH_THREADS 4
-//#define DEFISH_THREADS 1
-// topology for efficientlion
+#define TILE_W 384
+#define TILE_H 384
 #define THREADS 2
 #define TILES 2
-// size of defished image
-#define DEFISH_H 540
-#define DEFISH_W (DEFISH_H * 3 / 2)
-// size of preview for phone & efficientlion
+// size of preview for phone
 #define PREVIEW_H TILE_H
-#define PREVIEW_W (PREVIEW_H * DEFISH_W / DEFISH_H)
-// must set this at runtime after input_w is known
-int tile_x[TILES];
+#define PREVIEW_W (PREVIEW_H * 3 / 2)
+const int tile_x[] = { 0, PREVIEW_W - TILE_W };
 // defishing table
-#define SMOOTH_DEFISH
-    #ifndef SMOOTH_DEFISH
-    int *x_lookup;
-    int *y_lookup;
-    #else
-    float *x_lookup;
-    float *y_lookup;
-    #endif
-#endif // FISHEYE
+//#define SMOOTH_DEFISH
+#ifndef SMOOTH_DEFISH
+int x_lookup[PREVIEW_W * PREVIEW_H];
+int y_lookup[PREVIEW_W * PREVIEW_H];
+#else
+float x_lookup[PREVIEW_W * PREVIEW_H];
+float y_lookup[PREVIEW_W * PREVIEW_H];
+#endif
+#endif
 
 
-// blending of target histogram must be fast enough to keep up with
-// lighting changes & slow enough to defeat glitches.
-#define WEIGHT (1.0 / 15)
-// must be low enough for chi squared to align the bins but high enough
-// to store more spatial information
-#define BINS 32
-// the target histogram
-float want_hist[BINS * 3] = { 0 };
 
-// unique boxes
-class Box
-{
-public:
-    int x, y, w, h;
-    float score;
-// the histogram
-    float hist[BINS * 3];
-// chi squared difference
-    float distance;
-// tile the box came from
-    int tile;
-};
-vector<Box> boxes;
-int nearest_box = -1;
 
 int servo_fd = -1;
 static pthread_mutex_t servo_lock;
@@ -245,8 +229,9 @@ error_flags &= ~CAM_ERROR_MASK;
 
 uint8_t error_flags = 0x00;
 uint8_t prev_error_flags = 0x00;
-FILE *ffmpeg_writer = 0;
+FILE *ffmpeg_fd = 0;
 
+int is_truck = 1;
 // the servo controller ADC for truck cam
 int adc = 0;
 int deadband = 5;
@@ -256,7 +241,6 @@ int do_capture = 0;
 int frames_captured = 0;
 
 int current_operation = IDLE;
-void do_defish();
 
 #define INIT_PROFILE \
     struct timespec profile_time1; \
@@ -273,6 +257,66 @@ void do_defish();
     profile_time1 = profile_time2;
 
 
+int init_serial(const char *path)
+{
+	struct termios term;
+    int verbose = 0;
+
+	if(verbose) printf("init_serial %d: opening %s\n", __LINE__, path);
+
+// Initialize serial port
+	int fd = open(path, O_RDWR | O_NOCTTY | O_SYNC);
+	if(fd < 0)
+	{
+		if(verbose) printf("init_serial %d: path=%s: %s\n", __LINE__, path, strerror(errno));
+		return -1;
+	}
+	
+	if (tcgetattr(fd, &term))
+	{
+		if(verbose) printf("init_serial %d: path=%s %s\n", __LINE__, path, strerror(errno));
+		close(fd);
+		return -1;
+	}
+
+
+/*
+ * printf("init_serial: %d path=%s iflag=0x%08x oflag=0x%08x cflag=0x%08x\n", 
+ * __LINE__, 
+ * path, 
+ * term.c_iflag, 
+ * term.c_oflag, 
+ * term.c_cflag);
+ */
+	tcflush(fd, TCIOFLUSH);
+	cfsetispeed(&term, B115200);
+	cfsetospeed(&term, B115200);
+//	term.c_iflag = IGNBRK;
+	term.c_iflag = 0;
+	term.c_oflag = 0;
+	term.c_lflag = 0;
+//	term.c_cflag &= ~(PARENB | PARODD | CRTSCTS | CSTOPB | CSIZE);
+//	term.c_cflag |= CS8;
+	term.c_cc[VTIME] = 1;
+	term.c_cc[VMIN] = 1;
+/*
+ * printf("init_serial: %d path=%s iflag=0x%08x oflag=0x%08x cflag=0x%08x\n", 
+ * __LINE__, 
+ * path, 
+ * term.c_iflag, 
+ * term.c_oflag, 
+ * term.c_cflag);
+ */
+	if(tcsetattr(fd, TCSANOW, &term))
+	{
+		if(verbose) printf("init_serial %d: path=%s %s\n", __LINE__, path, strerror(errno));
+		close(fd);
+		return -1;
+	}
+
+	printf("init_serial %d: opened %s\n", __LINE__, path);
+	return fd;
+}
 
 
 
@@ -300,14 +344,17 @@ int open_hdmi(int verbose)
     int got_usb = 0;
 
 // faster probing through libusb
-    if(probe_usb(FISHEYE_VID, FISHEYE_PID))
+    if(probe_usb(WEBCAM_VID1, WEBCAM_PID1) ||
+        probe_usb(WEBCAM_VID2, WEBCAM_PID2) ||
+        probe_usb(HDMI_VID, HDMI_PID) ||
+        probe_usb(FISHEYE_VID, FISHEYE_PID))
     {
         got_usb = 1;
     }
 
     if(!got_usb)
     {
-//        printf("open_hdmi %d: no USB device\n", __LINE__);
+        printf("open_hdmi %d: no USB device\n", __LINE__);
         CLEAR_CAM_ERRORS
         error_flags |= CAM_ENUM_ERROR;
         send_error();
@@ -363,58 +410,61 @@ int open_hdmi(int verbose)
         if(fd2 < 0) continue;
 
 // set webcam parameters
+        if(is_truck)
+        {
+
 // test the W & H to find the right camera
-        struct v4l2_format v4l2_params;
-        bzero(&v4l2_params, sizeof(v4l2_params));
-        v4l2_params.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        ioctl(fd2, VIDIOC_G_FMT, &v4l2_params);
+            struct v4l2_format v4l2_params;
+            bzero(&v4l2_params, sizeof(v4l2_params));
+            v4l2_params.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            ioctl(fd2, VIDIOC_G_FMT, &v4l2_params);
 // printf("open_hdmi %d %s %d %d\n", 
 // __LINE__, 
 // paths.at(i),
 // v4l2_params.fmt.pix.width, 
 // v4l2_params.fmt.pix.height);
 
-        if(verbose)
-        {
-            printf("open_hdmi %d: %s format=%c%c%c%c w=%d h=%d\n",
-                __LINE__,
-                paths.at(i),
-                v4l2_params.fmt.pix.pixelformat & 0xff,
-                (v4l2_params.fmt.pix.pixelformat >> 8) & 0xff,
-                (v4l2_params.fmt.pix.pixelformat >> 16) & 0xff,
-                (v4l2_params.fmt.pix.pixelformat >> 24) & 0xff,
-                v4l2_params.fmt.pix.width,
-                v4l2_params.fmt.pix.height);
-        }
-
-        if(v4l2_params.fmt.pix.width != RAW_W ||
-            v4l2_params.fmt.pix.height != RAW_H)
-        {
-            close(fd2);
-            fd2 = -1;
-        }
-
-
-// probe picture controls
-        if(fd2 >= 0)
-        {
-		    for(int j = V4L2_CID_BASE; j < V4L2_CID_LASTP1; j++)
-		    {
-                struct v4l2_queryctrl arg;
-			    bzero(&arg, sizeof(arg));
-			    arg.id = j;
-                if(!ioctl(fd2, VIDIOC_QUERYCTRL, &arg))
-                {
-                    printf("open_hdmi %d id=%x min=%d max=%d step=%d default=%d %s\n", 
-                        __LINE__, 
-                        arg.id, 
-                        arg.minimum,
-                        arg.maximum,
-                        arg.step,
-                        arg.default_value,
-                        arg.name);
-                }
+            if(verbose)
+            {
+                printf("open_hdmi %d: %s format=%c%c%c%c w=%d h=%d\n",
+                    __LINE__,
+                    paths.at(i),
+                    v4l2_params.fmt.pix.pixelformat & 0xff,
+                    (v4l2_params.fmt.pix.pixelformat >> 8) & 0xff,
+                    (v4l2_params.fmt.pix.pixelformat >> 16) & 0xff,
+                    (v4l2_params.fmt.pix.pixelformat >> 24) & 0xff,
+                    v4l2_params.fmt.pix.width,
+                    v4l2_params.fmt.pix.height);
             }
+
+            if(v4l2_params.fmt.pix.width != TRUCK_W ||
+                v4l2_params.fmt.pix.height != TRUCK_H)
+            {
+                close(fd2);
+                fd2 = -1;
+            }
+
+        
+// probe picture controls
+            if(fd2 >= 0)
+            {
+		        for(int j = V4L2_CID_BASE; j < V4L2_CID_LASTP1; j++)
+		        {
+                    struct v4l2_queryctrl arg;
+			        bzero(&arg, sizeof(arg));
+			        arg.id = j;
+                    if(!ioctl(fd2, VIDIOC_QUERYCTRL, &arg))
+                    {
+                        printf("open_hdmi %d id=%x min=%d max=%d step=%d default=%d %s\n", 
+                            __LINE__, 
+                            arg.id, 
+                            arg.minimum,
+                            arg.maximum,
+                            arg.step,
+                            arg.default_value,
+                            arg.name);
+                    }
+                }
 
 // // backlight compensation
 //                 struct v4l2_control ctrl_arg;
@@ -447,7 +497,7 @@ int open_hdmi(int verbose)
 //                         __LINE__,
 //                         ctrl_arg.value);
 //                 }
-        }
+            }
 
 //         if(fd2 >= 0)
 //         {
@@ -488,38 +538,39 @@ int open_hdmi(int verbose)
 //             }
 //         }
 
-        if(fd2 >= 0)
-        {
+            if(fd2 >= 0)
+            {
 // saturation
-            struct v4l2_control ctrl_arg;
-            ctrl_arg.id = 0x980902;
-            if(ioctl(fd2, VIDIOC_G_CTRL, &ctrl_arg) < 0)
-            {
-                printf("open_hdmi %d VIDIOC_G_CTRL failed\n",
-                    __LINE__);
-            }
-            else
-            {
-                printf("open_hdmi %d got saturation %d\n",
-                    __LINE__,
-                    ctrl_arg.value);
-            }
+                struct v4l2_control ctrl_arg;
+                ctrl_arg.id = 0x980902;
+                if(ioctl(fd2, VIDIOC_G_CTRL, &ctrl_arg) < 0)
+                {
+                    printf("open_hdmi %d VIDIOC_G_CTRL failed\n",
+                        __LINE__);
+                }
+                else
+                {
+                    printf("open_hdmi %d got saturation %d\n",
+                        __LINE__,
+                        ctrl_arg.value);
+                }
 
 
-            ctrl_arg.value = 127;
-            if(ioctl(fd2, VIDIOC_S_CTRL, &ctrl_arg) < 0)
-            {
-                printf("open_hdmi %d VIDIOC_S_CTRL failed\n",
-                    __LINE__);
+                ctrl_arg.value = 127;
+                if(ioctl(fd2, VIDIOC_S_CTRL, &ctrl_arg) < 0)
+                {
+                    printf("open_hdmi %d VIDIOC_S_CTRL failed\n",
+                        __LINE__);
+                }
+                else
+                {
+                    printf("open_hdmi %d setting saturation to %d\n",
+                        __LINE__,
+                        ctrl_arg.value);
+                }
             }
-            else
-            {
-                printf("open_hdmi %d setting saturation to %d\n",
-                    __LINE__,
-                    ctrl_arg.value);
-            }
-        }
 
+        } // is_truck
 
 
 
@@ -537,8 +588,16 @@ int open_hdmi(int verbose)
             v4l2_params.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
 #endif
 
-            v4l2_params.fmt.pix.width = RAW_W;
-            v4l2_params.fmt.pix.height = RAW_H;
+            if(is_truck)
+            {
+                v4l2_params.fmt.pix.width = TRUCK_W;
+                v4l2_params.fmt.pix.height = TRUCK_H;
+            }
+            else
+            {
+                v4l2_params.fmt.pix.width = HDMI_W;
+                v4l2_params.fmt.pix.height = HDMI_H;
+            }
             
             if(ioctl(fd2, VIDIOC_S_FMT, &v4l2_params) < 0)
             {
@@ -559,7 +618,7 @@ int open_hdmi(int verbose)
         if(fd2 >= 0)
         {
             struct v4l2_requestbuffers requestbuffers;
-            requestbuffers.count = DEVICE_BUFFERS;
+            requestbuffers.count = 1;
             requestbuffers.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
             requestbuffers.memory = V4L2_MEMORY_MMAP;
             if(ioctl(fd2, VIDIOC_REQBUFS, &requestbuffers) < 0)
@@ -571,37 +630,33 @@ int open_hdmi(int verbose)
             }
             else
             {
-                for(int i = 0; i < DEVICE_BUFFERS; i++)
-                {
-                    buffer.type = requestbuffers.type;
-                    buffer.index = i;
+                buffer.type = requestbuffers.type;
+                buffer.index = 0;
 
-                    if(ioctl(fd2, VIDIOC_QUERYBUF, &buffer) < 0)
-				    {
-					    printf("open_hdmi %d: VIDIOC_QUERYBUF failed\n",
+                if(ioctl(fd2, VIDIOC_QUERYBUF, &buffer) < 0)
+				{
+					printf("open_hdmi %d: VIDIOC_QUERYBUF failed\n",
+                        __LINE__);
+                    close(fd2);
+                    fd2 = -1;
+				}
+                else
+                {
+                    mmap_buffer = (unsigned char*)mmap(NULL,
+					    buffer.length,
+					    PROT_READ | PROT_WRITE,
+					    MAP_SHARED,
+					    fd2,
+					    buffer.m.offset);
+                    printf("open_hdmi %d: allocated buffer size=%d\n",
+                        __LINE__,
+                        buffer.length);
+                    if(ioctl(fd2, VIDIOC_QBUF, &buffer) < 0)
+                    {
+                        printf("open_hdmi %d: VIDIOC_QBUF failed\n",
                             __LINE__);
                         close(fd2);
                         fd2 = -1;
-				    }
-                    else
-                    {
-                        mmap_buffer[i] = (unsigned char*)mmap(NULL,
-					        buffer.length,
-					        PROT_READ | PROT_WRITE,
-					        MAP_SHARED,
-					        fd2,
-					        buffer.m.offset);
-                        printf("open_hdmi %d: allocated buffer %d size=%d\n",
-                            __LINE__,
-                            i,
-                            buffer.length);
-                        if(ioctl(fd2, VIDIOC_QBUF, &buffer) < 0)
-                        {
-                            printf("open_hdmi %d: VIDIOC_QBUF failed\n",
-                                __LINE__);
-                            close(fd2);
-                            fd2 = -1;
-                        }
                     }
                 }
             }
@@ -615,8 +670,7 @@ int open_hdmi(int verbose)
             {
 		        printf("open_hdmi %d: VIDIOC_STREAMON failed\n",
                     __LINE__);
-                for(int i = 0; i < DEVICE_BUFFERS; i++)
-                    munmap(mmap_buffer[i], buffer.length);
+                munmap(mmap_buffer, buffer.length);
                 close(fd2);
                 fd2 = -1;
             }
@@ -637,7 +691,7 @@ int open_hdmi(int verbose)
 
     if(fd2 < 0)
     {
-        printf("open_hdmi %d: open/config error\n", __LINE__);
+        printf("do_tracker %d: open/config error\n", __LINE__);
         CLEAR_CAM_ERRORS
         error_flags |= VIDEO_CONFIG_ERROR;
         send_error();
@@ -646,7 +700,7 @@ int open_hdmi(int verbose)
     }
     else
     {
-        printf("open_hdmi %d: video configured\n", __LINE__);
+        printf("do_tracker %d: video configured\n", __LINE__);
     }
 
     return fd2;
@@ -682,6 +736,7 @@ void* hdmi_thread(void *ptr)
             FD_SET(hdmi_fd, &fds);
             tv.tv_sec = 2;
             tv.tv_usec = 0;
+//            UPDATE_PROFILE
             int result = select(hdmi_fd + 1, &fds, NULL, NULL, &tv);
             if(result <= 0)
             {
@@ -715,11 +770,16 @@ void* hdmi_thread(void *ptr)
                 }
                 else
                 {
+//                    UPDATE_PROFILE
+//                    printf("hdmi_thread %d delta=%f\n", __LINE__, delta);
+
                     CLEAR_CAM_ERRORS
                     send_error();
+//                    UPDATE_PROFILE
+//                    printf("hdmi_thread %d delta=%f\n", __LINE__, delta);
 
 //                  printf("hdmi_thread %d\n", __LINE__);
-                    unsigned char *ptr = mmap_buffer[buffer.index];
+                    unsigned char *ptr = mmap_buffer;
 //                     printf("hdmi_thread %d: index=%d size=%d %02x %02x %02x %02x %02x %02x %02x %02x\n",
 //                         __LINE__,
 //                         buffer.index,
@@ -741,6 +801,7 @@ void* hdmi_thread(void *ptr)
                     }
                     else
                     if(
+#if defined(FISHEYE) || defined(KEYCAM)
 // test for valid JPEG image
 // HDMI
                         (ptr[0] == 0xff && 
@@ -752,32 +813,51 @@ void* hdmi_thread(void *ptr)
                         ptr[1] == 0xd8 && 
                         ptr[2] == 0xff && 
                         ptr[3] == 0xc0))
+#endif
                     {
 // send it to processor
                         pthread_mutex_lock(&frame_lock);
-                        if(!got_image)
+// space is available
+                        if(frame_size == 0)
                         {
-                            int decoded_w;
-                            int decoded_h;
-                            decompress_jpeg_yuv(ptr, 
-                                buffer.bytesused,
-                                &decoded_w,
-                                &decoded_h,
-                                raw_y,
-                                raw_u,
-                                raw_v);
-
-                            got_image = 1;
+                            memcpy(reader_buffer3, ptr, buffer.bytesused);
+                            frame_size = buffer.bytesused;
+                            pthread_mutex_unlock(&frame_lock);
+                            sem_post(&frame_ready_sema);
                         }
-                        pthread_mutex_unlock(&frame_lock);
-                        sem_post(&frame_ready_sema);
+                        else
+                        {
+                            pthread_mutex_unlock(&frame_lock);
+                        }
                     }
+    //printf("hdmi_thread %d\n", __LINE__);
+//                    UPDATE_PROFILE
+//                    printf("hdmi_thread %d delta=%f\n", __LINE__, delta);
 
                     if(ioctl(hdmi_fd, VIDIOC_QBUF, &buffer) < 0)
                     {
                         printf("hdmi_thread %d: VIDIOC_QBUF failed\n",
                             __LINE__);
                     }
+//                    UPDATE_PROFILE
+//                    printf("hdmi_thread %d delta=%f\n", __LINE__, delta);
+
+//                     if(is_truck)
+//                     {
+// // this stalls randomly but resets if it isn't called every frame
+// // reset saturation
+//                         struct v4l2_control ctrl_arg;
+//                         bzero(&ctrl_arg, sizeof(ctrl_arg));
+//                         ctrl_arg.id = 0x980902;
+//                         ctrl_arg.value = 127;
+//                         ioctl(hdmi_fd, VIDIOC_S_CTRL, &ctrl_arg);
+// // reset backlight compensation
+//                         ctrl_arg.id = 0x98091c;
+//                         ctrl_arg.value = 0;
+//                         ioctl(hdmi_fd, VIDIOC_S_CTRL, &ctrl_arg);
+//                     }
+//                    UPDATE_PROFILE
+//                    printf("hdmi_thread %d delta=%f\n", __LINE__, delta);
 
                     frame_count++;
                     struct timeval time2;
@@ -785,9 +865,9 @@ void* hdmi_thread(void *ptr)
                     int64_t diff = TO_MS(time2) - TO_MS(time1);
                     if(diff >= 1000)
                     {
-//                         printf("hdmi_thread %d device FPS: %f\n",
-//                             __LINE__,
-//                             (double)frame_count * 1000 / diff);
+    //                     printf("hdmi_thread %d FPS: %f\n",
+    //                         __LINE__,
+    //                         (double)frame_count * 1000 / diff);
                         frame_count = 0;
                         time1 = time2;
                     }
@@ -953,10 +1033,10 @@ void quit(int sig)
 
     printf("quit %d sig=%s\n", __LINE__, signal_titles[sig]);
 
-    if(ffmpeg_writer)
+    if(ffmpeg_fd)
     {
         printf("quit %d\n", __LINE__);
-        fclose(ffmpeg_writer);
+        fclose(ffmpeg_fd);
         printf("quit %d\n", __LINE__);
     }
     exit(0);
@@ -1045,6 +1125,11 @@ void load_defaults()
         }
         
         printf("load_defaults %d key='%s' value='%s'\n", __LINE__, key, value);
+        if(!strcasecmp(key, "TRUCK"))
+        {
+            is_truck = atoi(value);
+        }
+        else
         if(!strcasecmp(key, "DEADBAND"))
         {
             deadband = atoi(value);
@@ -1075,6 +1160,7 @@ void save_defaults()
     }
 
     fprintf(fd, "########################################\n");
+    fprintf(fd, "TRUCK %d\n", is_truck);
     fprintf(fd, "DEADBAND %d\n", (int)deadband);
     fprintf(fd, "SPEED %d\n", (int)speed);
 
@@ -1084,6 +1170,7 @@ void save_defaults()
 void dump_settings()
 {
     printf("dump_settings %d\n", __LINE__);
+    printf("TRUCK %d\n", is_truck);
     printf("DEADBAND %d\n", (int)deadband);
     printf("SPEED %d\n", (int)speed);
 }
@@ -1105,7 +1192,7 @@ static std::vector<float> normalization(const std::vector<float>& feature)
 }
 
 
-// use tensorflow for bilinear interpolation
+// some kind of bloated, academic Google version of bilinear interpolation
 // hard coded for uint8
 template <class T>
 void resize(T* out, 
@@ -1123,7 +1210,7 @@ void resize(T* out,
 
 // printf("resize %d %d %d %d %d\n", __LINE__, image_width, image_height, wanted_width, wanted_height);
 
-  interpreter->SetNumThreads(THREADS);
+
   // two inputs: input and new_sizes
   interpreter->AddTensors(2, &base_index);
   // one output
@@ -1272,11 +1359,14 @@ void write_servo_config()
 {
     if(servo_fd >= 0)
     {
-        uint8_t buffer[SERVO_CONFIG_SIZE + 2];
-        buffer[0] = 0xff;
-        buffer[1] = 0xcf;
-        memcpy(buffer + 2, servo_config, SERVO_CONFIG_SIZE);
-        int temp = write(servo_fd, buffer, SERVO_CONFIG_SIZE + 2);
+        if(is_truck)
+        {
+            uint8_t buffer[SERVO_CONFIG_SIZE + 2];
+            buffer[0] = 0xff;
+            buffer[1] = 0xcf;
+            memcpy(buffer + 2, servo_config, SERVO_CONFIG_SIZE);
+            int temp = write(servo_fd, buffer, SERVO_CONFIG_SIZE + 2);
+        }
     }
 }
 
@@ -1285,13 +1375,16 @@ void write_servos(int use_pwm_limits)
 {
 	if(servo_fd >= 0)
 	{
+        if(is_truck)
+        {
 // 1 axis
-        uint8_t buffer[3];
-        buffer[0] = 0xff;
-        buffer[1] = 0xd2;
-        buffer[2] = adc;
-	    int _ = write(servo_fd, buffer, 3);
+            uint8_t buffer[3];
+            buffer[0] = 0xff;
+            buffer[1] = 0xd2;
+            buffer[2] = adc;
+	        int _ = write(servo_fd, buffer, 3);
 //printf("write_servos %d %d\n", __LINE__, adc);
+        }
     }
 }
 
@@ -1307,22 +1400,26 @@ void server_write()
 // get under maximum UDP size of 65535
         compressing_factor.push_back(IMWRITE_JPEG_QUALITY);
         compressing_factor.push_back(50);
-
-// seems to require BGR
-        uint8_t *ptr = preview[current_input2].ptr(0);
-        for(int i = 0; i < PREVIEW_H * PREVIEW_W; i++)
-        {
-            uint8_t temp = ptr[0];
-            ptr[0] = ptr[2];
-            ptr[2] = temp;
-            ptr += 3;
-        }
+#ifdef KEYCAM
+        Mat preview_image(PREVIEW_H, PREVIEW_W, CV_8UC3);
+        resize(raw_image[current_input2], 
+            preview_image,
+            cv::Size(PREVIEW_W, PREVIEW_H),
+            cv::INTER_LINEAR); // no speed difference
 
         imencode(".jpg", 
-            preview[current_input2], 
+            preview_image, 
+            buf, 
+            compressing_factor);
+#endif // KEYCAM
+
+#ifdef FISHEYE
+        imencode(".jpg", 
+            defished[current_input2], 
             buf, 
             compressing_factor);
 //printf("server_write %d %d\n", __LINE__, buf.size());
+#endif
 
         int jpg_size = buf.size();
         int offset = vijeo_offset2;
@@ -1381,6 +1478,7 @@ void server_read(uint8_t c)
         {
             parsing_state = PARSE_COMMAND;
             
+            is_truck = settings_buffer[0];
             deadband = settings_buffer[1];
             speed = settings_buffer[2];
             memcpy(servo_config, settings_buffer + 3, SERVO_CONFIG_SIZE);
@@ -1394,134 +1492,156 @@ void server_read(uint8_t c)
     }
 }
 
-// defishing engine
-class Defisher
+// posenet engine
+class PoseEngine
 {
 public:
-    sem_t go;
-    sem_t done;
-    int row1;
-    int row2;
-    
-    void init(int n)
+    std::unique_ptr<tflite::FlatBufferModel> model;
+    std::unique_ptr<tflite::Interpreter> interpreter;
+    tflite::ops::builtin::BuiltinOpResolver resolver;
+// input size for the neural network
+    int input_w;
+    int input_h;
+    int input;
+    int output_score_layer;
+    int output_location_layer;
+    int output_size;
+// constants defined by the model & class BodyPart
+#define KEYPOINTS 17
+// requires a square input.  320 is the max
+#define NET_W 320
+#define NET_H 320
+#define MAX_ANIMALS 6
+    vector<int> keypoints[MAX_ANIMALS];
+    int total_animals;
+
+    void init(const char *model_path)
     {
-        row1 = n * DEFISH_H / DEFISH_THREADS;
-        row2 = (n + 1) * DEFISH_H / DEFISH_THREADS;
-        if((row1 % 2) > 0) row1--;
-        if((row2 % 2) > 0) row2--;
-//printf("Defisher::init %d: row1=%d row2=%d\n", __LINE__, row1, row2);
-        sem_init(&go, 0, 0);
-        sem_init(&done, 0, 0);
-        pthread_attr_t  attr;
-        pthread_attr_init(&attr);
-        pthread_t tid;
-        pthread_create(&tid, 
-		    &attr, 
-		    entrypoint, 
-		    this);
-    }
+// from movenet_multipose.py
+        model = tflite::FlatBufferModel::BuildFromFile(model_path);
+        tflite::InterpreterBuilder builder(*model, resolver);
+        builder(&interpreter);
+        interpreter->SetNumThreads(THREADS);
+// input size is 1x1 without this
+        vector<int> resize_dims = { 1, NET_H, NET_W, 3 };
+        interpreter->ResizeInputTensor(0, resize_dims);
+        interpreter->AllocateTensors();
+        interpreter->Invoke();
 
+        const std::vector<int> inputs = interpreter->inputs();
+        input = inputs[0];
+        TfLiteIntArray* dims = interpreter->tensor(input)->dims;
+//printf("PoseEngine::init %d %d\n", __LINE__, dims->data[0]);
+        int input_type = interpreter->tensor(input)->type; // 3 = kTfLiteUInt8
+        int channels = dims->data[3];
+        input_h = dims->data[1];
+        input_w = dims->data[2];
 
+        printf("PoseEngine::init %d input=%d input_w=%d input_h=%d channels=%d type=%d\n",
+            __LINE__,
+            input,
+            input_w,
+            input_h,
+            channels,
+            input_type);
+
+        std::vector<int> outputs = interpreter->outputs();
+// the output slots are hard coded
+        output_location_layer = outputs[0];
+//         output_score_layer = outputs[2];
+//         TfLiteIntArray* output_dims = interpreter->tensor(output_score_layer)->dims;
+//         output_size = output_dims->data[output_dims->size - 1];
+// 1 = kTfLiteFloat32
+        int output_type = interpreter->tensor(output_location_layer)->type; 
+
+//        TfLiteIntArray* location_dims = interpreter->tensor(output_location_layer)->dims;
+
+         printf("PoseEngine::init %d outputs=%d output_location_layer=%d output_type=%d\n",
+             __LINE__,
+             outputs.size(),
+             output_location_layer,
+             output_type);
+//         printf("PoseEngine::init %d output_location_layer=%d output_score_layer=%d output_size=%d output_type=%d\n",
+//             __LINE__,
+//             output_location_layer,
+//             output_score_layer,
+//             output_size,
+//             output_type);
+
+    }    
+    
     void process()
     {
-        sem_post(&go);
-    }
-    
-    void wait()
-    {
-        sem_wait(&done);
-    }
+        uint8_t *input_tensor = interpreter->typed_tensor<uint8_t>(input);
+        total_animals = 0;
+// scale it to the input layer
+        int raw_w = raw_image[current_input].cols;
+        int raw_h = raw_image[current_input].rows;
+        resize<uint8_t>(input_tensor, 
+            raw_image[current_input].ptr(0),
+            raw_h,
+            raw_w,
+            3,
+            input_h,
+            input_w,
+            3);
+        interpreter->Invoke();
+        float *output_tensor = interpreter->typed_tensor<float>(output_location_layer);
+        TfLiteIntArray* dims = interpreter->tensor(output_location_layer)->dims;
+//         printf("PoseEngine::process %d raw_w=%d raw_h=%d %d %d %d %d\n", 
+//             __LINE__, 
+//             raw_w,
+//             raw_h,
+//             dims->data[0], 
+//             dims->data[1], 
+//             dims->data[2], 
+//             dims->data[3]);
 
-    static void* entrypoint(void *ptr)
-    {
-        Defisher *engine = (Defisher*)ptr;
-        engine->run();
-        return 0;
-    }
+// maximum number of animals
+        int num_instances = dims->data[1];
+        if(num_instances != MAX_ANIMALS)
+            printf("PoseEngine::process %d num_instances=%d MAX_ANIMALS=%d\n",
+                __LINE__,
+                num_instances,
+                MAX_ANIMALS);
 
-    void run()
-    {
-        while(1)
+
+        for(int i = 0; i < num_instances; i++)
         {
-            sem_wait(&go);
+            float person_score = output_tensor[i * dims->data[2] + KEYPOINTS * 3 + 4];
+//             printf("PoseEngine::process %d i=%d person_score=%f\n", 
+//                 __LINE__,
+//                 i, 
+//                 person_score);
+            if(person_score < ANIMAL_THRESHOLD) continue;
 
-// Y plane
-            for(int i = row1; i < row2; i++)
+            float *kpts_y = &output_tensor[i * dims->data[2] + 0];
+            float *kpts_x = &output_tensor[i * dims->data[2] + 1];
+            float *scores = &output_tensor[i * dims->data[2] + 2];
+            keypoints[total_animals].clear();
+
+//            printf("PoseEngine::process %d ", __LINE__);
+            for(int j = 0; j < KEYPOINTS; j++)
             {
-                uint8_t *dst_row = defished_y.ptr(0) + i * DEFISH_W;
-                uint8_t *src_plane = raw_y;
-                for(int j = 0; j < DEFISH_W; j++)
+                if(scores[j * 3] >= KEYPOINT_THRESHOLD)
                 {
-                    float x_in = x_lookup[i * DEFISH_W + j];
-                    float y_in = y_lookup[i * DEFISH_W + j];
-					float y1_fraction = y_in - floor(y_in);
-					float y2_fraction = 1.0 - y1_fraction;
-					float x1_fraction = x_in - floor(x_in);
-					float x2_fraction = 1.0 - x1_fraction;
-                    uint8_t *in_pixel1 = src_plane + (int)y_in * RAW_W + (int)x_in;
-                    uint8_t *in_pixel2 = in_pixel1 + RAW_W;
-                    uint8_t *in_pixel3 = in_pixel1 + 1;
-                    uint8_t *in_pixel4 = in_pixel2 + 1;
-					*dst_row++ = (uint8_t)(
-                        *in_pixel1 * x2_fraction * y2_fraction +
-						*in_pixel2 * x2_fraction * y1_fraction +
-						*in_pixel3 * x1_fraction * y2_fraction +
-						*in_pixel4 * x1_fraction * y1_fraction);
+                    keypoints[total_animals].push_back((int)(kpts_x[j * 3] * PREVIEW_W));
+                    keypoints[total_animals].push_back((int)(kpts_y[j * 3] * PREVIEW_H));
                 }
-            }
-
-// UV planes
-            for(int plane = 1; plane < 3; plane++)
-            {
-                for(int i = row1; i < row2; i++)
+                else
                 {
-                    uint8_t *dst_row;
-                    uint8_t *src_plane;
-                    switch(plane)
-                    {
-                         case 1: 
-                            dst_row = defished_u.ptr(0) + i * DEFISH_W; 
-                            src_plane = raw_u;
-                            break;
-                         case 2: 
-                            dst_row = defished_v.ptr(0) + i * DEFISH_W; 
-                            src_plane = raw_v;
-                            break;
-                    }
-
-                    for(int j = 0; j < DEFISH_W; j++)
-                    {
-                        float x_in = x_lookup[i * DEFISH_W + j] / 2;
-                        float y_in = y_lookup[i * DEFISH_W + j] / 2;
-					    float y1_fraction = y_in - floor(y_in);
-					    float y2_fraction = 1.0 - y1_fraction;
-					    float x1_fraction = x_in - floor(x_in);
-					    float x2_fraction = 1.0 - x1_fraction;
-                        uint8_t *in_pixel1 = src_plane + 
-                            (int)y_in * (RAW_W / 2) + 
-                            (int)x_in;
-                        uint8_t *in_pixel2 = in_pixel1 + (RAW_W / 2);
-                        uint8_t *in_pixel3 = in_pixel1 + 1;
-                        uint8_t *in_pixel4 = in_pixel2 + 1;
-
-
-//*dst_row++ = *in_pixel1;
- 					    *dst_row++ = (uint8_t)(
-                            *in_pixel1 * x2_fraction * y2_fraction +
- 						    *in_pixel2 * x2_fraction * y1_fraction +
- 						    *in_pixel3 * x1_fraction * y2_fraction +
- 						    *in_pixel4 * x1_fraction * y1_fraction);
-                    }
-                } // i
-            } // plane
-
-            
-            sem_post(&done);
+                    keypoints[total_animals].push_back(0x7fff);
+                    keypoints[total_animals].push_back(0x7fff);
+                }
+//                keypoints[total_animals].push_back(scores[j * 3]);
+//                printf("%f ", scores[j * 3]);
+            }
+//            printf("\n");
+            total_animals++;
         }
     }
 };
 
-Defisher defishers[DEFISH_THREADS];
 
 // efficientlion engine
 // 1 engine for each tile
@@ -1531,6 +1651,9 @@ public:
     std::unique_ptr<tflite::FlatBufferModel> model;
     std::unique_ptr<tflite::Interpreter> interpreter;
     tflite::ops::builtin::BuiltinOpResolver resolver;
+// input size for the neural network
+    int input_w;
+    int input_h;
     int input;
     int tile;
     sem_t go;
@@ -1657,22 +1780,43 @@ public:
             scores.clear();
 
 
+#ifdef FISHEYE
 // crop only
             for(int i = 0; i < TILE_H; i++)
             {
                 memcpy(input_tensor + i * TILE_W * 3,
-                    preview[current_input].ptr(0) + 
+                    defished[current_input].ptr(0) + 
                         i * PREVIEW_W * 3 + 
                         tile_x[tile] * 3,
                     TILE_W * 3);
             }
+#endif
 
+
+#ifdef KEYCAM
+            cv::Rect cropping(tile_x[tile], 
+                0, 
+                TILE_W,
+                TILE_H);
+    // just changes the starting pointer & row stride
+            Mat cropped = raw_image[current_input](cropping);
+    // allocates a contiguous frame buffer for the resize routine
+            Mat cropped_image = cropped.clone();
+    // scale it to the input layer
+            resize<uint8_t>(input_tensor, 
+                cropped_image.ptr(0),
+                TILE_H,
+                TILE_W,
+                3,
+                input_h,
+                input_w,
+                3);
+#endif // KEYCAM
 
 
 // save the tile
 // if(tile == 1)
 // {
-// printf("Engine::run %d tile_x=%d\n", __LINE__, tile_x[tile]);
 // static int counter = 0;
 // Mat temp(input_h, input_w, CV_8UC3);
 // memcpy(temp.ptr(0), input_tensor, input_w * input_h * 3);
@@ -1734,112 +1878,7 @@ float calculate_error(float current_x, float want_x)
 }
 
 Engine engines[TILES];
-
-void get_hist(float *dst, int x, int y, int w, int h)
-{
-// easier to do it from scratch than massage the opencv histogram function
-    bzero(dst, sizeof(float) * BINS * 3);
-    int temp[BINS * 3];
-    bzero(temp, sizeof(int) * BINS * 3);
-
-    if(x < 0)
-    {
-        w += x;
-        x = 0;
-    }
-
-    if(y < 0)
-    {
-        h += y;
-        y = 0;
-    }
-
-    int rows = preview[current_input].rows;
-    int cols = preview[current_input].cols;
-    if(x + w > cols)
-    {
-        w -= x + w - cols;
-    }
-
-    if(y + h > rows)
-    {
-        h -= y + h - rows;
-    }
-
-    if(w <= 0 || h <= 0) return;
-
-    for(int i = y; i < y + h; i++)
-    {
-        uint8_t *row = preview[current_input].ptr(0) +
-            cols * 3 * i + x * 3;
-        for(int j = 0; j < w; j++)
-        {
-            int bin = row[0] * BINS / 256;
-            temp[bin]++;
-            bin = row[1] * BINS / 256;
-            temp[BINS + bin]++;
-            bin = row[2] * BINS / 256;
-            temp[BINS * 2 + bin]++;
-            row += 3;
-        }
-    }
-
-// normalize
-    int max = 0;
-    for(int i = 0; i < BINS * 3; i++)
-        max = MAX(temp[i], max);
-    if(max < 1) max = 1;
-    for(int i = 0; i < BINS * 3; i++)
-        dst[i] = (float)temp[i] / max;
-}
-
-void blend_hist(float *old_hist, float *new_hist, float weight)
-{
-    for(int i = 0; i < BINS * 3; i++)
-    {
-        old_hist[i] = old_hist[i] * (1.0 - weight) + new_hist[i] * weight;
-    }
-}
-
-float diff_hist(float *want, float *unknown)
-{
-    float total = 0;
-    for(int i = 0; i < BINS * 3; i++)
-    {
-        total += SQR(unknown[i] - want[i]);
-    }
-    return sqrt(total);
-}
-
-void print_fixed(float n)
-{
-    char string[TEXTLEN];
-    char string2[TEXTLEN];
-    sprintf(string, "%.2f", n);
-    int spaces = 16 - strlen(string);
-    if(spaces < 1) spaces = 1;
-//printf("print_fixed %d spaces=%d\n", __LINE__, spaces);
-    for(int i = 0; i < spaces; i++)
-    {
-        string2[i] = ' ';
-    }
-    strcpy(string2 + spaces, string);
-    printf("%s", string2);
-}
-
-void dump_hist(float *hist, const char *title)
-{
-    printf("%s:\n", title);
-    for(int i = 0; i < BINS; i++)
-    {
-        printf("\t");
-        print_fixed(hist[i]);
-        print_fixed(hist[BINS + i]);
-        print_fixed(hist[BINS * 2 + i]);
-        printf("\n");
-    }
-}
-
+PoseEngine pose_engine;
 
 void process_truck()
 {
@@ -1853,137 +1892,36 @@ void process_truck()
     }
 
 // search for biggest one
-//     int best_index = -1;
-//     int best_tile = -1;
-//     int max_size = 0;
-//     for(int tile = 0; tile < TILES; tile++)
-//     {
-//         for(int i = 0; i < engines[tile].boxes.size() / 4; i++)
-//         {
-//             int w = engines[tile].boxes.at(i * 4 + 2);
-//             int h = engines[tile].boxes.at(i * 4 + 3);
-//             int area = w * h;
-//             if(area > max_size)
-//             {
-//                 max_size = area;
-//                 best_index = i;
-//                 best_tile = tile;
-//             }
-//         }
-//     }
-
-// delete the overlapping boxes
-    boxes.clear();
-    nearest_box = -1;
+    int best_index = -1;
+    int best_tile = -1;
+    int max_size = 0;
     for(int tile = 0; tile < TILES; tile++)
     {
-        for(int src = 0; src < engines[tile].boxes.size() / 4; src++)
+        for(int i = 0; i < engines[tile].boxes.size() / 4; i++)
         {
-            int src_x = engines[tile].boxes.at(src * 4 + 0);
-            int src_y = engines[tile].boxes.at(src * 4 + 1);
-            int src_w = engines[tile].boxes.at(src * 4 + 2);
-            int src_h = engines[tile].boxes.at(src * 4 + 3);
-            float score = engines[tile].scores.at(src);
-            int got_it = 0;
-
-// find existing overlapping box
-            for(int i = 0; i < boxes.size() && !got_it; i++)
+            int w = engines[tile].boxes.at(i * 4 + 2);
+            int h = engines[tile].boxes.at(i * 4 + 3);
+            int area = w * h;
+            if(area > max_size)
             {
-                Box *dst = &boxes[i];
-
-// keep overlapping boxes in the same tile
-                if(dst->tile != tile)
-                {
-                    if(src_x < dst->x + dst->w &&
-                        src_x + src_w > dst->x &&
-                        src_y < dst->y + dst->h &&
-                        src_y + src_h > dst->y)
-                    {
-// they overlap
-                        int src_area = src_w * src_h;
-                        int dst_area = dst->w * dst->h;
-// replace with the bigger one
-                        if(src_area > dst_area)
-                        {
-                            dst->x = src_x;
-                            dst->y = src_y;
-                            dst->w = src_w;
-                            dst->h = src_h;
-                            dst->tile = tile;
-                            dst->score = score;
-                        }
-
-                        got_it = 1;
-                    }
-                }
-            }
-
-            if(!got_it)
-            {
-                Box dst;
-                dst.x = src_x;
-                dst.y = src_y;
-                dst.w = src_w;
-                dst.h = src_h;
-                dst.tile = tile;
-                dst.score = score;
-                boxes.push_back(dst);
+                max_size = area;
+                best_index = i;
+                best_tile = tile;
             }
         }
     }
-
-// recompute the goal color if 1 hit
-    if(boxes.size() == 1)
-    {
-        Box *dst = &boxes[0];
-        get_hist(dst->hist, dst->x, dst->y, dst->w, dst->h);
-
-
-
-// defeat the case of the new target color coming from the wrong animal
-// with a moving average
-        blend_hist(want_hist, dst->hist, WEIGHT);
-
-//dump_hist(dst->hist, "new_hist");
-//dump_hist(want_hist, "want_hist");
-
-// distance between self for testing
-        dst->distance = diff_hist(want_hist, dst->hist);
-//printf("main %d: distance=%f\n", __LINE__, dst->distance);
-        nearest_box = 0;
-    }
-    else
-    if(boxes.size() > 1)
-    {
-// get the color separation in each box
-        float nearest_distance;
-        for(int i = 0; i < boxes.size(); i++)
-        {
-            Box *box = &boxes[i];
-            get_hist(box->hist, box->x, box->y, box->w, box->h);
-            box->distance = diff_hist(want_hist, box->hist);
-            if(i == 0 || box->distance < nearest_distance)
-            {
-                nearest_box = i;
-                nearest_distance = box->distance;
-            }
-        }
-
-// update the target color with the closest match in the group
-        Box *box = &boxes[nearest_box];
-        blend_hist(want_hist, box->hist, WEIGHT);
-//dump_hist(box->hist, "nearest_hist");
-//dump_hist(want_hist, "want_hist");
-//printf("main %d: nearest_box=%d distance=%f\n", __LINE__, nearest_box, nearest_distance);
-    }
-
 
 // generate servo command
-    if(nearest_box >= 0)
+    if(best_index >= 0)
     {
-        Box *box = &boxes[nearest_box];
-        float face_x = (float)(box->x + box->w / 2) / PREVIEW_W;
-        float face_y = (float)box->y / PREVIEW_H;
+        int x = engines[best_tile].boxes.at(best_index * 4 + 0);
+        int y = engines[best_tile].boxes.at(best_index * 4 + 1);
+        int w = engines[best_tile].boxes.at(best_index * 4 + 2);
+        int h = engines[best_tile].boxes.at(best_index * 4 + 3);
+
+
+        float face_x = (float)(x + w / 2) / TRUCK_W;
+        float face_y = (float)y / TILE_H;
 
         float center_x = 0.5;
         if(current_operation == TRACKING)
@@ -2020,205 +1958,71 @@ void process_truck()
     }
 }
 
-
+void process_poses()
+{
+    pose_engine.process();
+}
 
 int send_truck(int offset)
 {
-    int total = boxes.size();
+    int total = 0;
+//    double scale = (double)PREVIEW_W / raw_image[current_input].cols;
+    double scale = 1;
+    for(int tile = 0; tile < TILES; tile++)
+        total += engines[tile].boxes.size() / 4;
     if(total > 255) total = 255;
-
     vijeo_buffer[offset++] = total;
-    for(int i = 0; i < total; i++)
+    int current = 0;
+    for(int tile = 0; tile < TILES; tile++)
     {
-        Box *box = &boxes[i];
-        vijeo_buffer[offset++] = (box->x & 0xff);
-        vijeo_buffer[offset++] = (box->x >> 8) & 0xff;
-        vijeo_buffer[offset++] = (box->y & 0xff);
-        vijeo_buffer[offset++] = (box->y >> 8) & 0xff;
-        vijeo_buffer[offset++] = (box->w & 0xff);
-        vijeo_buffer[offset++] = (box->w >> 8) & 0xff;
-        vijeo_buffer[offset++] = (box->h & 0xff);
-        vijeo_buffer[offset++] = (box->h >> 8) & 0xff;
+        for(int i = 0; i < engines[tile].boxes.size() / 4; i++)
+        {
+            if(current >= total) break;
 
-// info text
+            int x = (int)(engines[tile].boxes.at(i * 4 + 0) * scale);
+            int y = (int)(engines[tile].boxes.at(i * 4 + 1) * scale);
+            int w = (int)(engines[tile].boxes.at(i * 4 + 2) * scale);
+            int h = (int)(engines[tile].boxes.at(i * 4 + 3) * scale);
+            vijeo_buffer[offset++] = (x & 0xff);
+            vijeo_buffer[offset++] = (x >> 8) & 0xff;
+            vijeo_buffer[offset++] = (y & 0xff);
+            vijeo_buffer[offset++] = (y >> 8) & 0xff;
+            vijeo_buffer[offset++] = (w & 0xff);
+            vijeo_buffer[offset++] = (w >> 8) & 0xff;
+            vijeo_buffer[offset++] = (h & 0xff);
+            vijeo_buffer[offset++] = (h >> 8) & 0xff;
+
 //            const char *name = "LION";
-        char string[TEXTLEN];
-//            sprintf(string, "%.2f %d", box->score, box->tile);
-        sprintf(string, "%.2f %.2f", 
-            box->score, 
-            box->distance);
-//        sprintf(string, "%.2f", 
-//            box->distance);
-        int len = strlen(string);
-        memcpy(vijeo_buffer + offset, string, len);
-        offset += len;
-// null terminate
-        vijeo_buffer[offset++] = 0;
+            char string[TEXTLEN];
+            sprintf(string, "%.2f %d", engines[tile].scores.at(i), tile);
+            int len = strlen(string);
+            memcpy(vijeo_buffer + offset, string, len);
+            offset += len;
+            vijeo_buffer[offset++] = 0;
+
+            current++;
+        }
     }
-
-    vijeo_buffer[offset++] = nearest_box;
-
-
     return offset;
 }
 
-
-void init_defish()
+int send_poses(int offset)
 {
-    x_lookup = new float[DEFISH_W * DEFISH_H];
-    y_lookup = new float[DEFISH_W * DEFISH_H];
-
-    for(int i = 0; i < DEFISH_THREADS; i++)
-        defishers[i].init(i);
-
-// init defishing table
-// parameters from Cinelerra
-    double radius = 1.0;
-    double fov = 0.65;
-    double aspect = 1.0;
-    double center_x = RAW_W * 49 / 100;
-    double center_y = RAW_H * 50 / 100;
-
-    double x_factor = aspect;
-    double y_factor = 1.0 / aspect;
-    double max_z = hypot(RAW_W, RAW_H) / 2;
-    double r = max_z / M_PI / (fov / 2);
-
-    for(int y_out = 0; y_out < DEFISH_H; y_out++)
+    vijeo_buffer[offset++] = pose_engine.total_animals;
+    for(int animal = 0; animal < pose_engine.total_animals; animal++)
     {
-        for(int x_out = 0; x_out < DEFISH_W; x_out++)
+        for(int i = 0; i < KEYPOINTS; i++)
         {
-            double x_in = x_out * RAW_H / DEFISH_H + 150;
-            double y_in = y_out * RAW_H / DEFISH_H;
-            double x_diff = x_in - center_x;
-            double y_diff = y_in - center_y;
-            double z = hypot(x_diff, y_diff);
-            double angle = atan2(y_diff, x_diff);
-            double radius1 = (z / r) * 2 * radius;
-            double z_in = r * atan(radius1) / (M_PI / 2);
-            x_in = z_in * cos(angle) * x_factor + center_x;
-            y_in = z_in * sin(angle) * y_factor + center_y;
-#ifndef SMOOTH_DEFISH
-            CLAMP(x_in, 0, RAW_W - 1);
-            CLAMP(y_in, 0, RAW_H - 1);
-            x_lookup[y_out * DEFISH_W + x_out] = (int)x_in;
-            y_lookup[y_out * DEFISH_W + x_out] = (int)y_in;
-#else
-            CLAMP(x_in, 0, RAW_W - 2);
-            CLAMP(y_in, 0, RAW_H - 2);
-            x_lookup[y_out * DEFISH_W + x_out] = x_in;
-            y_lookup[y_out * DEFISH_W + x_out] = y_in;
-#endif
-//printf("%d %d -> %d %d\n", (int)x_in, (int)y_in, x, y);
+            int x = pose_engine.keypoints[animal].at(i * 2);
+            int y = pose_engine.keypoints[animal].at(i * 2 + 1);
+            vijeo_buffer[offset++] = (x & 0xff);
+            vijeo_buffer[offset++] = (x >> 8) & 0xff;
+            vijeo_buffer[offset++] = (y & 0xff);
+            vijeo_buffer[offset++] = (y >> 8) & 0xff;
         }
     }
+    return offset;
 }
-
-void do_defish()
-{
-// defish
-    defished_y.create(DEFISH_H, DEFISH_W, CV_8UC1);
-    defished_u.create(DEFISH_H, DEFISH_W, CV_8UC1);
-    defished_v.create(DEFISH_H, DEFISH_W, CV_8UC1);
-
-    for(int i = 0; i < DEFISH_THREADS; i++)
-        defishers[i].process();
-    for(int i = 0; i < DEFISH_THREADS; i++)
-        defishers[i].wait();
-}
-
-void handle_capture()
-{
-    if(do_capture)
-    {
-        if(!ffmpeg_writer)
-        {
-            char string[TEXTLEN];
-            uuid_t temp_id;
-            uuid_generate(temp_id);
-            sprintf(string, 
-//                        "ffmpeg -y -f rawvideo -y -pix_fmt bgr24 -r 10 -s:v %dx%d -i - -c:v h264 -crf 30 -pix_fmt yuvj420p -an ",
-//                "ffmpeg -y -f rawvideo -y -pix_fmt rgb24 -r 10 -s:v %dx%d -i - -c:v mpeg4 -qscale:v 5 -pix_fmt yuvj420p -an ",
-                "ffmpeg -y -f rawvideo -y -pix_fmt yuv420p -r 10 -s:v %dx%d -i - -c:v mpeg4 -qscale:v 5 -pix_fmt yuvj420p -an ",
-// write the raw images from the camera
-                RAW_W,
-                RAW_H);
-// write the defished image
-//                        DEFISH_W,
-//                        DEFISH_H);
-            uuid_unparse(temp_id, string + strlen(string));
-            strcat(string, ".mp4");
-            printf("main %d: running %s\n", __LINE__, string);
-            ffmpeg_writer = popen(string, "w");
-            frames_captured = 0;
-        }
-
-        if(ffmpeg_writer)
-        {
-// write the raw images from the camera
-            fwrite(raw_y, 
-                1, 
-                RAW_W * RAW_H, 
-                ffmpeg_writer);
-            fwrite(raw_u, 
-                1, 
-                RAW_W * RAW_H / 4, 
-                ffmpeg_writer);
-            fwrite(raw_v, 
-                1, 
-                RAW_W * RAW_H / 4, 
-                ffmpeg_writer);
-            frames_captured++;
-        }
-        else
-        {
-            printf("main %d: Error running ffmpeg\n", __LINE__);
-            do_capture = 0;
-            sleep(1);
-        }
-    }
-    else
-    if(ffmpeg_writer != 0)
-    {
-        pclose(ffmpeg_writer);
-        ffmpeg_writer = 0;
-        int _ = system("sync");
-        printf("main %d: stopped recording\n", __LINE__);
-    }
-}
-
-
-// get the average color in the box
-// void get_color(float *dst, int x, int y, int w, int h)
-// {
-//     double accum_r = 0;
-//     double accum_g = 0;
-//     double accum_b = 0;
-//     int total = 0;
-//     for(int i = y; i < y + h; i++)
-//     {
-//         if(i >= 0 && i < PREVIEW_H)
-//         {
-//             uint8_t *row = preview[current_input].ptr(0) +
-//                 PREVIEW_W * 3 * i + x * 3;
-//             for(int j = x; j < x + w; j++)
-//             {
-//                 if(j >= 0 && j < PREVIEW_W)
-//                 {
-//                     accum_r += row[0];
-//                     accum_g += row[1];
-//                     accum_b += row[2];
-//                     total++;
-//                 }
-//                 row += 3;
-//             }
-//         }
-//     }
-//     
-//     dst[0] = accum_r / total;
-//     dst[1] = accum_g / total;
-//     dst[2] = accum_b / total;
-// }
 
 int main(int argc, char** argv)
 {
@@ -2245,30 +2049,67 @@ int main(int argc, char** argv)
     dump_settings();
     libusb_init(0);
 
-    printf("main %d loading %s\n", __LINE__, MODEL);
-    for(int i = 0; i < TILES; i++)
-        engines[i].init(MODEL, i);
+    if(is_truck)
+    {
+        printf("main %d loading %s\n", __LINE__, MODEL);
+        for(int i = 0; i < TILES; i++)
+            engines[i].init(MODEL, i);
+    }
+    else
+    {
+        printf("main %d loading %s\n", __LINE__, POSE_MODEL);
+        pose_engine.init(POSE_MODEL);
+    }
 
-// must set this after the input size is known
-    tile_x[0] = 0;
-    tile_x[1] = PREVIEW_W - TILE_W;
-
-// need to round up to a multiple of the MCU height
-    int h_round = MCU_H * (RAW_H / MCU_H);
-    if((RAW_H % MCU_H) > 0) h_round += MCU_H;
-    raw_y = new uint8_t[RAW_W * h_round];
-    raw_u = new uint8_t[(RAW_W / 2) * (h_round / 2)];
-    raw_v = new uint8_t[(RAW_W / 2) * (h_round / 2)];
-
-#ifndef READ_TEST_VIDEO
+// DEBUG disable to load test image
     init_hdmi();
-#endif
-
     init_server();
     init_servos();
     init_yuv();
-    init_defish();
 
+#ifdef FISHEYE
+// init defishing table
+// parameters from Cinelerra
+    double radius = 1.0;
+    double fov = 0.65;
+    double aspect = 1.0;
+    double center_x = TRUCK_W * 49 / 100;
+    double center_y = TRUCK_H * 50 / 100;
+
+    double x_factor = aspect;
+    double y_factor = 1.0 / aspect;
+    double max_z = hypot(TRUCK_W, TRUCK_H) / 2;
+    double r = max_z / M_PI / (fov / 2);
+
+    for(int y_out = 0; y_out < PREVIEW_H; y_out++)
+    {
+        for(int x_out = 0; x_out < PREVIEW_W; x_out++)
+        {
+            double x_in = x_out * TRUCK_H / PREVIEW_H + 150;
+            double y_in = y_out * TRUCK_H / PREVIEW_H;
+            double x_diff = x_in - center_x;
+            double y_diff = y_in - center_y;
+            double z = hypot(x_diff, y_diff);
+            double angle = atan2(y_diff, x_diff);
+            double radius1 = (z / r) * 2 * radius;
+            double z_in = r * atan(radius1) / (M_PI / 2);
+            x_in = z_in * cos(angle) * x_factor + center_x;
+            y_in = z_in * sin(angle) * y_factor + center_y;
+#ifndef SMOOTH_DEFISH
+            CLAMP(x_in, 0, TRUCK_W - 1);
+            CLAMP(y_in, 0, TRUCK_H - 1);
+            x_lookup[y_out * PREVIEW_W + x_out] = (int)x_in;
+            y_lookup[y_out * PREVIEW_W + x_out] = (int)y_in;
+#else
+            CLAMP(x_in, 0, TRUCK_W - 2);
+            CLAMP(y_in, 0, TRUCK_H - 2);
+            x_lookup[y_out * PREVIEW_W + x_out] = x_in;
+            y_lookup[y_out * PREVIEW_W + x_out] = y_in;
+#endif
+//printf("%d %d -> %d %d\n", (int)x_in, (int)y_in, x, y);
+        }
+    }
+#endif // FISHEYE
 
 
 //     while(1)
@@ -2277,6 +2118,7 @@ int main(int argc, char** argv)
 //         usleep(100000);
 //     }
 
+    int frame_size2;
 // compressed data from V4L2
     Mat rawData;
     float fps = 0;
@@ -2285,108 +2127,130 @@ int main(int argc, char** argv)
     clock_gettime(CLOCK_MONOTONIC, &fps_time1);
 
 
+//    printf("main %d\n", __LINE__);
 // mane loop
     while(1)
     {
         int got_it = 0;
 
 
-// DEBUG load test images
-#ifdef READ_TEST_VIDEO
-        static FILE *ffmpeg_reader = 0;
-        if(!ffmpeg_reader)
-        {
-            char string[TEXTLEN];
-            sprintf(string,
-                "ffmpeg -i %s -f rawvideo -pix_fmt yuv420p -",
-                TEST_VIDEO_PATH);
-            printf("main %d: running %s\n", __LINE__, string);
-            ffmpeg_reader = popen(string, "r");
-            if(!ffmpeg_reader)
-            {
-                printf("main %d: %s\n", __LINE__, strerror(errno));
-                sleep(1); 
-            }
-        }
-        
-        int result = fread(raw_y, 1, RAW_W * RAW_H, ffmpeg_reader);
-        result |= fread(raw_u, 1, RAW_W * RAW_H / 4, ffmpeg_reader);
-        result |= fread(raw_v, 1, RAW_W * RAW_H / 4, ffmpeg_reader);
-        if(result <= 0) 
-        {
-            printf("main %d: decoder quit\n", __LINE__);
-            return 0;
-        }
-
-// raw_yuv -> defished_yuv
-        do_defish();
-        got_it = 1;
-#endif // READ_TEST_VIDEO
-
+// DEBUG load test image
 #ifdef READ_TEST_IMAGE
-        if(raw_image.cols <= 0 && raw_image.rows <= 0)
+        if(raw_image[current_input].cols <= 0 && raw_image[current_input].rows <= 0)
         {
-            raw_image = imread("test2.jpg");
+            raw_image[current_input] = imread("test2.jpg");
         }
         got_it = 1;
+#else // READ_TEST_IMAGE
+// ingest the next frame
+//printf("main %d\n", __LINE__);
+//        UPDATE_PROFILE
+        sem_wait(&frame_ready_sema);
+//        UPDATE_PROFILE
+//        printf("main %d delta=%f\n", __LINE__, delta);
+        pthread_mutex_lock(&frame_lock);
+        int frame_size2 = frame_size;
+        if(frame_size > 0)
+        {
+#if defined(FISHEYE) || defined(KEYCAM)
+// compressed JPEG to RGB
+            rawData.reserveBuffer(frame_size);
+            memcpy(rawData.ptr(), reader_buffer3, frame_size);
+            raw_image[current_input] = imdecode(rawData, cv::IMREAD_COLOR);
+            if(raw_image[current_input].cols > 0 && raw_image[current_input].rows > 0)
+            {
+                got_it = 1;
+            }
 #endif
 
-        if(!got_it)
-        {
-// injest the next frame from the camera
-            sem_wait(&frame_ready_sema);
-            pthread_mutex_lock(&frame_lock);
-            if(got_image)
-            {
-                got_image = 0;
-                got_it = 1;
-                handle_capture();
 
-// raw_yuv -> defished_yuv
-                do_defish();
-            }
-            pthread_mutex_unlock(&frame_lock);
-
-        } // !got_it
-
-        if(got_it)
-        {
-
-            Size newSize(PREVIEW_W, PREVIEW_H);
-// scale for preview/efficientlion
-            preview_y.create(PREVIEW_H, PREVIEW_W, CV_8UC1);
-            preview_u.create(PREVIEW_H, PREVIEW_W, CV_8UC1);
-            preview_v.create(PREVIEW_H, PREVIEW_W, CV_8UC1);
-            preview[current_input].create(PREVIEW_H, PREVIEW_W, CV_8UC3);
-// opencv resizer
-            resize(defished_y, preview_y, newSize);
-            resize(defished_u, preview_u, newSize);
-            resize(defished_v, preview_v, newSize);
-
+#ifdef FISHEYE
+// defish
+            defished[current_input].create(PREVIEW_H, PREVIEW_W, CV_8UC3);
+            uint8_t *src = raw_image[current_input].ptr(0);
             for(int i = 0; i < PREVIEW_H; i++)
             {
-                uint8_t *dst = preview[current_input].ptr(0) + 
+                uint8_t *dst_row = defished[current_input].ptr(0) +
                     i * PREVIEW_W * 3;
-                uint8_t *in_y = preview_y.ptr(0) + i * PREVIEW_W;
-                uint8_t *in_u = preview_u.ptr(0) + i * PREVIEW_W;
-                uint8_t *in_v = preview_v.ptr(0) + i * PREVIEW_W;
                 for(int j = 0; j < PREVIEW_W; j++)
                 {
-                    int y = *in_y++;
-                    y |= (y << 16) | (y << 8);
-                    int u = *in_u++;
-                    int v = *in_v++;
-                    int r, g, b;
-                    YUV_TO_RGB(y, u, v, r, g, b);
-                    *dst++ = r;
-                    *dst++ = g;
-                    *dst++ = b;
+#ifndef SMOOTH_DEFISH
+                    int in_x = x_lookup[i * PREVIEW_W + j];
+                    int in_y = y_lookup[i * PREVIEW_W + j];
+                    *dst_row++ = src[in_y * TRUCK_W * 3 + in_x * 3 + 0];
+                    *dst_row++ = src[in_y * TRUCK_W * 3 + in_x * 3 + 1];
+                    *dst_row++ = src[in_y * TRUCK_W * 3 + in_x * 3 + 2];
+#else // !SMOOTH_DEFISH
+                    float x_in = x_lookup[i * PREVIEW_W + j];
+                    float y_in = y_lookup[i * PREVIEW_W + j];
+					float y1_fraction = y_in - floor(y_in);
+					float y2_fraction = 1.0 - y1_fraction;
+					float x1_fraction = x_in - floor(x_in);
+					float x2_fraction = 1.0 - x1_fraction;
+					uint8_t *in_pixel1 = &src[(int)y_in * TRUCK_W * 3 + (int)x_in * 3];
+					uint8_t *in_pixel2 = &src[(int)(y_in + 1) * TRUCK_W * 3 + (int)x_in * 3];
+                    for(int k = 0; k < 3; k++)
+                    {
+					    *dst_row++ = (uint8_t)(in_pixel1[k] * x2_fraction * y2_fraction +
+								    in_pixel2[k] * x2_fraction * y1_fraction +
+								    in_pixel1[k + 3] * x1_fraction * y2_fraction +
+								    in_pixel2[k + 3] * x1_fraction * y1_fraction);
+                    }
+#endif // SMOOTH_DEFISH
                 }
             }
 
+#endif // FISHEYE
+
+#if defined(HDMI)
+// packed YUV to RGB
+            raw_image[current_input].create(HDMI_H, HDMI_W, CV_8UC3);
+
+// printf("main %d w=%d h=%d\n",
+// __LINE__,
+// raw_image[current_input].cols,
+// raw_image[current_input].rows);
+
+            for(int i = 0; i < HDMI_H; i++)
+            {
+                uint8_t *in_row = reader_buffer3 + i * HDMI_W * 2; 
+                uint8_t *out_row = raw_image[current_input].ptr(0) +
+                    i * HDMI_W * 3;
+                for(int j = 0; j < HDMI_W; j += 2)
+                {
+                    int u = in_row[3];
+                    int v = in_row[1];
+                    int y = (in_row[0] << 16) | (in_row[0] << 8) | in_row[0];
+                    int r, g, b;
+                    YUV_TO_RGB(y, u, v, r, g, b);
+                    out_row[0] = r;
+                    out_row[1] = g;
+                    out_row[2] = b;
+                    y = (in_row[2] << 16) | (in_row[2] << 8) | in_row[2];
+                    YUV_TO_RGB(y, u, v, r, g, b);
+                    out_row[3] = r;
+                    out_row[4] = g;
+                    out_row[5] = b;
+                    out_row += 6;
+                    in_row += 4;
+                }
+                got_it = 1;
+            }
+#endif // HDMI
+            frame_size = 0;
+        }
+        pthread_mutex_unlock(&frame_lock);
+
+#endif // !READ_TEST_IMAGE
+
+        if(got_it)
+        {
 #ifdef ENABLE_TRACKER
-            process_truck();
-#endif // ENABLE_TRACKER
+            if(is_truck)
+                process_truck();
+            else
+                process_poses();
+#endif
 
             fps_frames++;
             struct timespec fps_time2;
@@ -2407,23 +2271,82 @@ int main(int argc, char** argv)
 
 
 
+            if(do_capture)
+            {
+                if(!ffmpeg_fd)
+                {
+                    char string[TEXTLEN];
+            		uuid_t temp_id;
+                    uuid_generate(temp_id);
+                    sprintf(string, 
+//                        "ffmpeg -y -f rawvideo -y -pix_fmt bgr24 -r 10 -s:v %dx%d -i - -c:v h264 -crf 30 -pix_fmt yuvj420p -an ",
+                        "ffmpeg -y -f rawvideo -y -pix_fmt bgr24 -r 10 -s:v %dx%d -i - -c:v mpeg4 -qscale:v 5 -pix_fmt yuvj420p -an ",
+// write the raw images from the camera
+//                        TRUCK_W,
+//                        TRUCK_H);
+// write the defished image
+                        PREVIEW_W,
+                        PREVIEW_H);
+                    uuid_unparse(temp_id, string + strlen(string));
+                    strcat(string, ".mp4");
+                    printf("main %d: running %s\n", __LINE__, string);
+                    ffmpeg_fd = popen(string, "w");
+                    frames_captured = 0;
+                }
+
+                if(ffmpeg_fd)
+                {
+#if 0
+// write the raw images from the camera
+                    fwrite(raw_image[current_input].ptr(0), 1, 
+                        raw_image[current_input].cols * 
+                        raw_image[current_input].rows * 3, ffmpeg_fd);
+#else
+// write the defished image
+                    fwrite(defished[current_input].ptr(0), 1, 
+                        defished[current_input].cols * 
+                        defished[current_input].rows * 3, ffmpeg_fd);
+#endif
+                    frames_captured++;
+                }
+                else
+                {
+                    printf("main %d: Error running ffmpeg\n", __LINE__);
+                    do_capture = 0;
+                    sleep(1);
+                }
+            }
+            else
+            if(ffmpeg_fd != 0)
+            {
+                pclose(ffmpeg_fd);
+                ffmpeg_fd = 0;
+                int _ = system("sync");
+                printf("main %d: stopped recording\n", __LINE__);
+            }
 
 
 // send frame to phone
             if(current_input2 < 0)
             {
-
 // pack the metadata
                 int offset = HEADER_SIZE;
                 vijeo_buffer[offset++] = (int)(fps * 256) & 0xff;
                 vijeo_buffer[offset++] = (int)fps;
 // pack the mode
-                vijeo_buffer[offset++] = 1;
+                vijeo_buffer[offset++] = is_truck;
 
 
 
 // store the hit boxes
-                offset = send_truck(offset);
+                if(is_truck)
+                {
+                    offset = send_truck(offset);
+                }
+                else
+                {
+                    offset = send_poses(offset);
+                }
 
                 send_vijeo(current_input, offset);
                 send_status();

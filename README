@@ -1,7 +1,7 @@
 Attempts to make the robot mounted camera track subjects.
 
 
-Copyright (C) 2021-2022 Adam Williams <broadcast at earthling dot net>
+Copyright (C) 2021-2024 Adam Williams <broadcast at earthling dot net>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -35,7 +35,7 @@ model_maker.py: train an efficientdet_lite object detector for tensorflow
 Hardware:
 
 
-cam_bearing.FCStd
+cam_bearing.FCStd: OBSOLETE
     bearing for motorized panning
     print bearing inner
     print bearing outer
@@ -49,20 +49,32 @@ cam_bearing.FCStd
     print right angle coupling with right hole pattern to create a right angle
     requires ironing
 
-cam_bearing2.FCStd:
+cam_bearing2.FCStd: OBSOLETE
     Bearing against the carbon fiber without an inner part.
 
-cam_motor3.FCStd:
-    brushless servo as a stepper motor for panning
+cam_motor4.FCStd:
+    static camera pole or brushless servo as a stepper motor for panning
     attaches to truck container
+    - track farstener - shift teeth 1mm for fine adjustment
+    - cf_clamp003-4 - linear design for attaching to the dummy servo
+    - cf base, cf_clamp002 - right angle design for attaching to the real servo
+    - TPU horn - durable connection between cf base & servo
+    - dummy servo - dummy servo for a static rod
+    
 
-cam_static.FCStd:
+cam_static.FCStd: OBSOLETE
     fixed camera pole
     use jig to bond the CF clamp pieces
 
 enclosure.FCStd: enclosure for a raspberri PI 4B & servo driver
 
+enclosure3.FCStd: enclosure for a jetson nano
+
+rasp_enclosure.FCStd: enclosure for raspberry pi 5
+
 generalplus.FCStd: adapt a keychain cam to a CF rod
+
+elp_fisheye.FCStd: adapt an ELP fisheye cam to a CF rod
 
 truckcam.FCMacro
 libisogrid.py: isogrid script for the enclosure
@@ -77,7 +89,7 @@ face_detect2.py: face tracking test program which came from opencv-4.x/samples/d
 face_recognizer_fast.onnx: model for face recognition using opencv DNN
 yunet.onnx: model for face detection using opencv DNN
 
-enclosure2.FCStd: enclosure for jetson nano
+enclosure3.FCStd: truck mounted enclosure for jetson nano
 
 efficientlion0.tflite.1000.300epoch: general model for tracking a whole body
     Trained using the prelabeled COCO 2017 dataset.
@@ -88,6 +100,8 @@ efficientlion0.yolo.300.tflite: model for tracking running athletes
 
 ffmpeg-kit: obsolete library used by Android
 
+rasp_enclosure.FCStd: truck mounted enclosure for rasp 5
+
 servo_board2.FCStd: enclosure for the cam2.pcb board which is part of the
     3D printed truck
 
@@ -95,7 +109,8 @@ tensortrack.c:
 trackerserver.c: track 1-2 people with a raspberry PI 4B
     Tracks pan & tilt.
     Uses whole body tracking with tensorflow
-    This didn't work.  Countreps/tracker continues to be the preferred method.
+    This didn't work because it can't detect overlapping or sideways animals.
+    Countreps/tracker continues to be the preferred method.
 
     A DSLR on a pan/tilt mount is driven by a servo board from
     countreps.  Video from HDMI goes to the tracker program.

@@ -30,19 +30,34 @@
 
 // the camera
 #define FISHEYE
+//#define KEYCAM
+//#define HDMI
+
+// video from raw HDMI YUV instead of JPEG
+#define HDMI_W 640
+#define HDMI_H 480
+
+#ifdef KEYCAM
+// video from generalplus/keychain cam
+#define TRUCK_W 1280
+#define TRUCK_H 720
+#endif
 
 // fisheye cam
 #ifdef FISHEYE
-#define RAW_W 1920
-#define RAW_H 1080
+#define TRUCK_W 1920
+#define TRUCK_H 1080
 #endif
 
+
+// maximum number of frames to send over wifi
+// inferrence always runs as fast as the CPU can go
+//#define FPS 11
 
 
 
 #define CLAMP(x, y, z) ((x) = ((x) < (y) ? (y) : ((x) > (z) ? (z) : (x))))
 #define TO_MS(x) ((x).tv_sec * 1000 + (x).tv_usec / 1000)
-#define SQR(x) ((x) * (x))
 
 extern int current_operation;
 #define IDLE 0

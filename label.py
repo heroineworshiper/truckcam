@@ -33,15 +33,19 @@ WANT_CLS = 0  # person ID
 NEW_CATEGORY = 'lion'
 
 # annotation format
-XML_ANNOTATION = False  # for efficientdet_lite
+XML_ANNOTATION = False  # for model_maker
 JSON_ANNOTATION = True  # for efficientdet
 # destination for JSON annotations
 TRAIN_ANNOTATIONS = '../train_lion/instances_train.json'
 VAL_ANNOTATIONS = '../val_lion/instances_val.json'
 
-# output image size
-DST_W = 640
-DST_H = 640
+# output image size if scaling
+#DST_W = 640
+#DST_H = 640
+# output image size if passing through
+DST_W = -1
+DST_H = -1
+
 
 import argparse
 import os
@@ -296,6 +300,13 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
 #                    print("path=%s h=%d w=%d" % (path, im_orig.shape[0], im_orig.shape[1]))
                     w = im_orig.shape[1]
                     h = im_orig.shape[0]
+
+                    global DST_W
+                    global DST_H
+                    if DST_W < 0: 
+                        DST_W = w
+                    if DST_H < 0: 
+                        DST_H = h
                     rect = [int(best_x1 * DST_W / w), 
                             int(best_y1 * DST_H / h), 
                             int(best_x2 * DST_W / w), 

@@ -1,22 +1,51 @@
 import libisogrid
+import libhoneycomb
 import importlib
 importlib.reload(libisogrid)
+importlib.reload(libhoneycomb)
 
 
+if False:
 # bottom panel
-extrudeTris, extrudeSubs = libisogrid.makeGrid(90, \
-    110, \
-    6, \
-    6, \
-    [ 1.0, 1.0 ], \
-    [ 1.0, 1.0 ], \
-    0, \
-    0, \
-    .6, \
-    1)
-extrudeTris.Placement = App.Placement(
-    App.Vector(-55, 45, -19.6),
-    App.Rotation(App.Vector(0, 0, 1), 270))
+    extrudeTris, extrudeSubs = libisogrid.makeGrid(90, \
+        110, \
+        6, \
+        6, \
+        [ 1.0, 1.0 ], \
+        [ 1.0, 1.0 ], \
+        0, \
+        0, \
+        .6, \
+        1)
+    extrudeTris.Placement = App.Placement(
+        App.Vector(-55, 45, -19.6),
+        App.Rotation(App.Vector(0, 0, 1), 270))
+
+if False:
+    grid = libhoneycomb.makeGrid(47, # w
+        68, # h
+        4,  # x_slices
+        3,  # y_slices
+        [ 2.0, 2.0 ], # x_borders
+        [ 2.0, 2.0 ], # y_borders
+        1.0) # inner_border
+    grid.Placement = App.Placement(
+        App.Vector(-3.0, 18.0, -45.0),
+        App.Rotation(App.Vector(0, 0, 1), 0.0))
+
+
+if True:
+    grid = libhoneycomb.makeGrid2(6,
+        10,
+        5,
+        .5)
+    grid.Placement = App.Placement(
+        App.Vector(-3.0, 18.0, -45.0),
+        App.Rotation(App.Vector(0, 0, 1), 0.0))
+
+
+
+
 
 
 

@@ -1,7 +1,11 @@
 #PKGCONFIG_INCS := `pkg-config opencv --cflags`
 #PKGCONFIG_LIBS := `pkg-config opencv --libs`
 
-BAZEL_PATH := `expr ../.cache/bazel/_bazel_root/*/external/`
+BAZEL_ROOT := /root/.cache/bazel/_bazel_root/510cb3499e6983b92a09020af9102ff3/
+
+BAZEL_LIB := $(BAZEL_ROOT)execroot/_main/bazel-out/aarch64-opt/bin/tensorflow/lite/
+BAZEL_INC := $(BAZEL_ROOT)external/flatbuffers/include
+
 
 LIBS := -L/usr/local/lib \
 	-lopencv_stitching \
@@ -19,41 +23,42 @@ LIBS := -L/usr/local/lib \
 
 CFLAGS := \
 	-O2 \
-	-std=c++11 \
-	-I/usr/local/include/opencv2
+	-std=c++17 \
+	-I/usr/local/include/opencv4 \
+        -I/usr/include/libusb-1.0
 
-TRUCKFLOW_LIBS := $(LIBS) -L. -ltensorflowlite -luuid
+TRUCKFLOW_LIBS := $(LIBS) -L. -ltensorflowlite -luuid -lusb-1.0 -ljpeg
 
 TRUCKFLOW_CFLAGS := \
+        -g \
 	$(CFLAGS) \
-	-I../tensorflow-2.8.0/ \
-        -I$(BAZEL_PATH)flatbuffers/include
+	-I../tensorflow-master/ \
+        -Iinclude
 
 
 CC := g++
 
 OBJS := \
-	cam_server.o
-
+	trackerserver.o
+        
 
 TRUCKCAM_OBJS := \
 	truckcam.o
 
 TRUCKFLOW_OBJS := \
-	truckflow.o
-
-TENSORTRACK_OBJS := \
-	tensortrack.o \
-	trackerserver.o
+	truckflow.o \
+        trackerlib.o
 
 truckcam: $(OBJS) $(TRUCKCAM_OBJS)
 	$(CC) -O2 -o truckcam $(OBJS) $(TRUCKCAM_OBJS) $(LIBS)
 
+# install dependencies for truckflow
+deps:
+	cp -a $(BAZEL_LIB)libtensorflowlite.so .
+	cp -a $(BAZEL_INC) .
+
 truckflow: $(OBJS) $(TRUCKFLOW_OBJS)
 	$(CC) -O2 -o truckflow $(OBJS) $(TRUCKFLOW_OBJS) $(TRUCKFLOW_LIBS)
-
-tensortrack: $(TENSORTRACK_OBJS)
-	$(CC) -O2 -o tensortrack $(TENSORTRACK_OBJS) $(TRUCKFLOW_LIBS)
 
 $(OBJS) $(TRUCKCAM_OBJS):
 	$(CC) $(CFLAGS) -c $< -o $*.o
@@ -61,16 +66,12 @@ $(OBJS) $(TRUCKCAM_OBJS):
 $(TRUCKFLOW_OBJS):
 	$(CC) $(TRUCKFLOW_CFLAGS) -c $< -o $*.o
 
-$(TENSORTRACK_OBJS):
-	$(CC) $(TRUCKFLOW_CFLAGS) -c $< -o $*.o
-
 clean:
 	rm -f truckcam truckflow *.o
 
-tensortrack.o: tensortrack.c
-trackerserver.o: trackerserver.c
 truckflow.o: truckflow.c
 truckcam.o: truckcam.c
-cam_server.o: cam_server.c
+trackerserver.o: trackerserver.c
+trackerlib.o: trackerlib.c
 
 

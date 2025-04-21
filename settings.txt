@@ -1,27 +1,30 @@
+# settings for 1 axis camera tracker using efficientdet_lite
 # copy this to /sdcard/truckcam/
 
 # address on home network
-#ADDRESS 10.0.0.16
+ADDRESS 10.0.10.16
 # address in the field
-ADDRESS 10.0.3.1
+#ADDRESS 10.0.3.1
+
+# mode.  reboot required
+TRUCK 0
 
 # all parameters are 0-100 percent of screen width
 # don't move if face is within this distance of the goal position
-DEADBAND 5
+DEADBAND 1
 # PID factor
 SPEED 100
 
 
-# face size is ignored if these parameters are met
-# set any parameter to 0 to always use face size
-# select face if within this radius of the previous position
-XY_RADIUS 100
-
-# select face if within this percentage of the previous size
-SIZE_RADIUS 100
-
-# select face if within this percentage of the previous color
-COLOR_RADIUS 100
+# 0 timelapse mode
+# 1 motion control mode
+MOTION_CONTROL 0
+# 1-80
+MOTION_SPEED 30
+# MS
+MOTION_LEN 2000
+# 1-80.  1 = 1:20 timelapse
+TIMELAPSE_SPEED 1
 
 
 
