@@ -52,15 +52,15 @@ cam_bearing.FCStd: OBSOLETE
 cam_bearing2.FCStd: OBSOLETE
     Bearing against the carbon fiber without an inner part.
 
-cam_motor4.FCStd:
-    static camera pole or brushless servo as a stepper motor for panning
+cam_motor5.FCStd:
+    brushless servo as a stepper motor for panning
     attaches to truck container
     - track farstener - shift teeth 1mm for fine adjustment
-    - cf_clamp003-4 - linear design for attaching to the dummy servo
-    - cf base, cf_clamp002 - right angle design for attaching to the real servo
-    - TPU horn - durable connection between cf base & servo
+    - cf plate, cf_clamps - servo to CF rod
+    - TPU plate - durable connection between cf plate & dummy servo
     - dummy servo - dummy servo for a static rod
-    
+    - TPU horn - durable connection between CF plate & real servo
+    TODO: make locknuts removable & locknut holder fixed to the assembly
 
 cam_static.FCStd: OBSOLETE
     fixed camera pole
@@ -75,6 +75,8 @@ rasp_enclosure.FCStd: enclosure for raspberry pi 5
 generalplus.FCStd: adapt a keychain cam to a CF rod
 
 elp_fisheye.FCStd: adapt an ELP fisheye cam to a CF rod
+
+light.FCStd: pole mount for a converted LED lightbulb
 
 truckcam.FCMacro
 libisogrid.py: isogrid script for the enclosure
